@@ -1,0 +1,1155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>minisql — SQL Playground Demo</title>
+  <meta name="description" content="Interactive SQL playground: tokenizer, recursive-descent parser and executor over embedded CSV data — joins, aggregates, NULL logic.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='21' font-size='14' text-anchor='middle' fill='white' font-family='monospace'>SQL</text></svg>">
+  <style>
+    :root {
+      --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef0f4; --border: #dde1e8;
+      --text: #16181d; --muted: #5d6573; --accent: #2563eb; --accent-ink: #ffffff;
+      --good: #15803d; --bad: #b91c1c; --radius: 12px;
+      --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 16px rgb(16 24 40 / 0.05);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1116; --surface: #161a21; --surface-2: #1d222b; --border: #2a303b;
+        --text: #e8eaee; --muted: #9aa3b2; --accent: #60a5fa; --accent-ink: #0b1220;
+        --good: #4ade80; --bad: #f87171; --shadow: none; color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent); }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 48px; }
+    header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+    header.top h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+    header.top p { margin: 2px 0 0; color: var(--muted); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); min-width: 0; margin-bottom: 16px; }
+    .card h2 { font-size: 15px; margin: 0 0 12px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    input, select, textarea, button { font: inherit; color: inherit; }
+    textarea {
+      width: 100%; padding: 10px 12px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--surface-2); outline: none; min-width: 0;
+      font-family: var(--mono); font-size: 14px; line-height: 1.5; resize: vertical;
+    }
+    textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button { cursor: pointer; border: 1px solid var(--border); background: var(--surface-2); padding: 9px 14px; border-radius: 9px; font-weight: 600; }
+    button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .muted { color: var(--muted); }
+    .mono { font-family: var(--mono); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
+    .table-wrap { overflow-x: auto; }
+    footer { margin-top: 32px; color: var(--muted); font-size: 13px; text-align: center; }
+    .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .presets button { font-size: 13px; padding: 5px 10px; font-weight: 500; }
+    .result-box { font-family: var(--mono); font-size: 13px; padding: 12px; background: var(--surface-2); border-radius: 8px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+    .finding { padding: 10px 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+    .finding.ok { background: color-mix(in srgb, var(--good) 12%, transparent); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent); }
+    .finding.risk { background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); }
+    .finding .kind { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bad); }
+    .finding.ok .kind { color: var(--good); }
+    .finding .detail { margin-top: 4px; color: var(--muted); }
+    .finding .caret { color: var(--bad); font-weight: 700; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+    .schema-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .schema-tabs button { font-size: 13px; font-weight: 600; padding: 5px 10px; }
+    .schema-tabs button.active { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+    code { font-family: var(--mono); font-size: 13px; }
+    .pill { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--surface-2); border: 1px solid var(--border); }
+    .pill.null { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+    .pill.int { color: var(--accent); }
+    .pill.str { color: var(--good); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1>minisql</h1>
+        <p>SELECT, joins, aggregates, NULL logic — tokenizer → parser → executor, all in this page.</p>
+      </div>
+      <a href="https://github.com/umer-78/mini-sql-engine">Source on GitHub</a>
+    </header>
+
+    <section class="card">
+      <h2>SQL playground</h2>
+      <p class="muted" style="margin-top:0">Four CSV tables loaded. Write a query and press <b>Run</b> (or ⌘/Ctrl+Enter). Errors point at the character that caused them.</p>
+      <div class="presets">
+        <button data-q="products">products</button>
+        <button data-q="revenue">revenue by category</button>
+        <button data-q="nulls">NULL counting</button>
+        <button data-q="join">left join orders</button>
+        <button data-q="having">group + having</button>
+        <button data-q="like">like pattern</button>
+        <button data-q="err">parse error</button>
+        <button data-q="sem">semantic error</button>
+      </div>
+      <label for="sql">Query</label>
+      <textarea id="sql" rows="5" spellcheck="false">SELECT * FROM products LIMIT 5</textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="runBtn">Run</button>
+        <label style="margin:0;font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px">
+          format <select id="fmt" style="width:auto;padding:6px 8px"><option value="table">table</option><option value="csv">csv</option></select>
+        </label>
+      </div>
+      <div id="out" style="margin-top:12px" aria-live="polite"></div>
+      <div id="ast" class="result-box" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Schema</h2>
+      <div class="schema-tabs" id="schemaTabs"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>column</th><th>type</th><th>notes</th></tr></thead>
+          <tbody id="schemaBody"></tbody>
+        </table>
+      </div>
+      <div class="muted" style="margin-top:8px;font-size:13px" id="rowCount"></div>
+    </section>
+
+    <section class="card">
+      <h2>Data preview</h2>
+      <div class="table-wrap">
+        <table>
+          <thead id="dataHead"></thead>
+          <tbody id="dataBody"></tbody>
+        </table>
+      </div>
+      <div class="muted" style="font-size:13px;margin-top:6px">First 8 rows of the selected table. Types are inferred per column, not per cell — a leading zero keeps a column text.</div>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>NULL is unknown, not false</h2>
+        <p class="muted" style="margin-top:0"><code>score &gt; 0</code> where <code>score</code> is NULL is neither true nor false — the row is dropped by WHERE, and so is <code>score &lt;= 0</code>. <code>false AND unknown</code> is false; <code>true OR unknown</code> is true.</p>
+        <div class="result-box">SELECT COUNT(*) AS all_rows, COUNT(city) AS with_city
+FROM customers;
+-- COUNT(*) counts rows; COUNT(col) counts values.
+-- Two customers have no city: 25 vs 23.</div>
+      </section>
+      <section class="card">
+        <h2>ORDER BY a column you did not select</h2>
+        <p class="muted" style="margin-top:0">Each output row is kept beside the input row it came from, so <code>SELECT name FROM people ORDER BY age</code> sorts by age — rather than sorting by nothing.</p>
+        <div class="result-box">error: 'name' is not in GROUP BY and is not an aggregate
+  — add it to GROUP BY or wrap it in one</div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>What it supports</h2>
+      <p><code>SELECT [DISTINCT]</code>, expressions with <code>+ - * / %</code>, aliases, <code>INNER|LEFT JOIN … ON</code>, <code>WHERE</code> with <code>AND/OR/NOT</code>, comparisons, <code>IS [NOT] NULL</code>, <code>[NOT] IN</code>, <code>[NOT] LIKE 'a%_'</code>, <code>GROUP BY</code> + <code>HAVING</code>, aggregates (<code>COUNT SUM AVG MIN MAX</code> incl. <code>DISTINCT</code>), <code>ORDER BY</code>, <code>LIMIT/OFFSET</code>.</p>
+      <p class="muted" style="margin-bottom:0"><b>Not supported:</b> INSERT/UPDATE/DELETE, subqueries, UNION, window functions, CASE, RIGHT/FULL JOIN. Joins are nested-loop — for files you can hold in memory.</p>
+    </section>
+
+    <footer>113 tests · 94% coverage · Python 3.10–3.12 · Built by <a href="https://github.com/umer-78">Umer Hashmi</a></footer>
+  </div>
+
+  <script>
+    // === Sample database (4 CSVs, seeded — matches the repo's data/) ===
+    // types are declared as the engine would infer them per column
+    const DB = {
+      products: {
+        columns: ['id', 'name', 'category', 'price', 'stock'],
+        types: ['int', 'str', 'str', 'int', 'int'],
+        rows: [
+          [1, '27" 1440p monitor', 'Displays', 68000, 40],
+          [2, '27" 4K monitor', 'Displays', 92000, 18],
+          [3, 'Standing desk', 'Desk', 74500, 12],
+          [4, 'Folding desk', 'Desk', 31000, 25],
+          [5, 'Mechanical keyboard', 'Keyboards', 22000, 60],
+          [6, 'Wireless keyboard', 'Keyboards', 14500, 80],
+          [7, 'USB-C hub', 'Accessories', 8900, 120],
+          [8, 'Laptop stand', 'Accessories', 6500, 95],
+          [9, 'Studio headphones', 'Audio', 45000, 30],
+          [10, 'Desk microphone', 'Audio', 38000, 22],
+          [11, '1TB SSD', 'Storage', 18000, 70],
+          [12, '2TB HDD', 'Storage', 12000, 55],
+          [13, 'Webcam 1080p', 'Accessories', 11000, 48],
+          [14, 'Monitor light bar', 'Displays', 9500, 64],
+          [15, 'Cable organizer', 'Accessories', 1500, 200],
+        ],
+      },
+      customers: {
+        columns: ['id', 'name', 'city', 'signup_on', 'score'],
+        types: ['int', 'str', 'str', 'str', 'int'],
+        rows: [
+          [1, 'Ali Khan', 'Lahore', '2024-01-15', 88],
+          [2, 'Sara Ahmed', 'Karachi', '2024-02-03', 91],
+          [3, 'Bilal Butt', 'Lahore', '2024-02-20', 64],
+          [4, 'Hina Qureshi', 'Islamabad', '2024-03-01', 77],
+          [5, 'Usman Tariq', 'Faisalabad', '2024-03-12', null],
+          [6, 'Fatima Noor', 'Karachi', '2024-03-18', 85],
+          [7, 'Zain Abbas', null, '2024-04-02', 59],
+          [8, 'Ayesha Sidd', 'Lahore', '2024-04-15', 93],
+          [9, 'Kamran Aslam', 'Rawalpindi', '2024-04-28', 71],
+          [10, 'Nadia Shah', 'Islamabad', '2024-05-06', 82],
+          [11, 'Omar Farooq', 'Karachi', '2024-05-14', null],
+          [12, 'Rabia Malik', 'Multan', '2024-05-22', 68],
+          [13, 'Hassan Raza', 'Lahore', '2024-06-01', 74],
+          [14, 'Iqra Chaudhry', 'Peshawar', '2024-06-11', 80],
+          [15, 'Junaid Akram', 'Quetta', '2024-06-19', 62],
+          [16, 'Maryam Chaudhry', null, '2024-07-02', 87],
+          [17, 'Asad Raza', 'Lahore', '2024-07-15', 55],
+          [18, 'Sana Iqbal', 'Karachi', '2024-07-23', 90],
+          [19, 'Tariq Mehmood', 'Islamabad', '2024-08-04', 66],
+          [20, 'Zara Hussain', 'Lahore', '2024-08-12', 78],
+          [21, 'Ahmed Nawaz', 'Faisalabad', '2024-08-20', 72],
+          [22, 'Bushra Khalid', 'Multan', '2024-09-01', 84],
+          [23, 'Daniyal Sheikh', 'Rawalpindi', '2024-09-09', 69],
+          [24, 'Eman Yousaf', 'Karachi', '2024-09-18', 95],
+          [25, 'Farhan Javed', 'Peshawar', '2024-09-27', 61],
+        ],
+      },
+      orders: {
+        columns: ['id', 'customer_id', 'placed_on', 'status', 'shipped_on'],
+        types: ['int', 'int', 'str', 'str', 'str'],
+        rows: [
+          [1, 1, '2024-05-01', 'shipped', '2024-05-03'],
+          [2, 2, '2024-05-02', 'shipped', '2024-05-05'],
+          [3, 4, '2024-05-04', 'shipped', '2024-05-07'],
+          [4, 6, '2024-05-06', 'cancelled', null],
+          [5, 8, '2024-05-08', 'shipped', '2024-05-10'],
+          [6, 1, '2024-05-12', 'pending', null],
+          [7, 9, '2024-05-14', 'shipped', '2024-05-16'],
+          [8, 10, '2024-05-16', 'shipped', '2024-05-18'],
+          [9, 13, '2024-05-18', 'shipped', '2024-05-21'],
+          [10, 14, '2024-05-20', 'pending', null],
+          [11, 3, '2024-05-22', 'shipped', '2024-05-25'],
+          [12, 15, '2024-05-24', 'shipped', '2024-05-27'],
+          [13, 18, '2024-05-26', 'cancelled', null],
+          [14, 20, '2024-05-28', 'shipped', '2024-05-30'],
+          [15, 2, '2024-06-01', 'shipped', '2024-06-04'],
+          [16, 7, '2024-06-03', 'shipped', '2024-06-06'],
+          [17, 22, '2024-06-05', 'pending', null],
+          [18, 24, '2024-06-07', 'shipped', '2024-06-10'],
+          [19, 5, '2024-06-09', 'shipped', '2024-06-12'],
+          [20, 12, '2024-06-11', 'shipped', '2024-06-14'],
+          [21, 8, '2024-06-15', 'shipped', '2024-06-18'],
+          [22, 16, '2024-06-17', 'shipped', '2024-06-20'],
+          [23, 11, '2024-06-19', 'cancelled', null],
+          [24, 25, '2024-06-21', 'shipped', '2024-06-24'],
+          [25, 4, '2024-06-25', 'shipped', '2024-06-28'],
+          [26, 19, '2024-06-27', 'pending', null],
+          [27, 21, '2024-07-01', 'shipped', '2024-07-04'],
+          [28, 23, '2024-07-03', 'shipped', '2024-07-06'],
+          [29, 1, '2024-07-07', 'shipped', '2024-07-10'],
+          [30, 10, '2024-07-09', 'shipped', '2024-07-12'],
+        ],
+      },
+      order_items: {
+        columns: ['id', 'order_id', 'product_id', 'quantity', 'unit_price'],
+        types: ['int', 'int', 'int', 'int', 'int'],
+        rows: [
+          [1, 1, 1, 2, 68000], [2, 1, 5, 1, 22000],
+          [3, 2, 2, 1, 92000], [4, 2, 11, 2, 18000],
+          [5, 3, 3, 1, 74500], [6, 3, 7, 2, 8900],
+          [7, 5, 1, 4, 68000], [8, 5, 15, 5, 1500],
+          [9, 7, 9, 1, 45000], [10, 7, 10, 1, 38000],
+          [11, 8, 2, 2, 92000], [12, 8, 8, 1, 6500],
+          [13, 9, 5, 3, 22000], [14, 9, 6, 2, 14500],
+          [15, 11, 4, 1, 31000], [16, 11, 12, 2, 12000],
+          [17, 12, 11, 5, 18000], [18, 12, 7, 3, 8900],
+          [19, 14, 1, 1, 68000], [20, 14, 14, 2, 9500],
+          [21, 15, 2, 3, 92000], [22, 15, 5, 4, 22000],
+          [23, 16, 9, 2, 45000], [24, 16, 13, 1, 11000],
+          [25, 18, 3, 2, 74500], [26, 18, 8, 2, 6500],
+          [27, 19, 6, 6, 14500], [28, 19, 15, 10, 1500],
+          [29, 20, 12, 4, 12000], [30, 20, 11, 1, 18000],
+          [31, 21, 1, 5, 68000], [32, 21, 14, 3, 9500],
+          [33, 22, 10, 2, 38000], [34, 22, 9, 2, 45000],
+          [35, 24, 5, 1, 22000], [36, 24, 7, 4, 8900],
+          [37, 25, 4, 2, 31000], [38, 25, 3, 1, 74500],
+          [39, 27, 2, 1, 92000], [40, 27, 13, 2, 11000],
+          [41, 28, 8, 3, 6500], [42, 28, 15, 8, 1500],
+          [43, 29, 9, 1, 45000], [44, 29, 10, 1, 38000],
+          [45, 30, 1, 2, 68000], [46, 30, 6, 2, 14500],
+        ],
+      },
+    };
+
+    // === Tokenizer ===
+    const KEYWORDS = new Set(['select','from','where','and','or','not','null','is','in','like','join','inner','left','on','group','by','having','order','asc','desc','limit','offset','distinct','as','between']);
+    function tokenize(sql) {
+      const tokens = [];
+      let i = 0;
+      const err = (msg, at = i) => { const e = new Error(msg); e.offset = at; throw e; };
+      while (i < sql.length) {
+        const ch = sql[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        if (ch === '-' && sql[i+1] === '-') { while (i < sql.length && sql[i] !== '\n') i++; continue; }
+        const start = i;
+        // string
+        if (ch === "'") {
+          let j = i + 1, s = '';
+          while (j < sql.length && sql[j] !== "'") { s += sql[j]; j++; }
+          if (j >= sql.length) err('unterminated string', start);
+          tokens.push({ kind: 'string', value: s, start, end: j + 1 });
+          i = j + 1; continue;
+        }
+        // number
+        if (/[0-9]/.test(ch)) {
+          let j = i;
+          while (j < sql.length && /[0-9]/.test(sql[j])) j++;
+          if (sql[j] === '.' && /[0-9]/.test(sql[j+1] || '')) { j++; while (j < sql.length && /[0-9]/.test(sql[j])) j++; }
+          tokens.push({ kind: 'number', value: parseFloat(sql.slice(i, j)), start, end: j });
+          i = j; continue;
+        }
+        // identifier
+        if (/[A-Za-z_]/.test(ch)) {
+          let j = i;
+          while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
+          const word = sql.slice(i, j);
+          const lower = word.toLowerCase();
+          if (KEYWORDS.has(lower)) tokens.push({ kind: lower, value: word, start, end: j });
+          else tokens.push({ kind: 'ident', value: word, start, end: j });
+          i = j; continue;
+        }
+        // operators — longest first
+        const three = sql.slice(i, i + 3);
+        const two = sql.slice(i, i + 2);
+        if (['<=', '>=', '<>', '!='].includes(two)) { tokens.push({ kind: two === '<>' ? '<>' : two, value: two, start, end: i + 2 }); i += 2; continue; }
+        if ('+-*/%()=<>.,;'.includes(ch)) { tokens.push({ kind: ch, value: ch, start, end: i + 1 }); i++; continue; }
+        err(`unexpected character '${ch}'`);
+      }
+      tokens.push({ kind: 'eof', value: null, start: sql.length, end: sql.length });
+      return tokens;
+    }
+
+    // === AST ===
+    // === Recursive-descent parser ===
+    // precedence chain: or → and → not → comparison → sum → product → unary → primary
+    function parse(tokens, sql) {
+      let pos = 0;
+      const peek = () => tokens[pos];
+      const advance = () => tokens[pos++];
+      const check = (...ks) => ks.includes(peek().kind);
+      const match = (...ks) => { if (check(...ks)) return advance(); return null; };
+      const err = (msg, tok = peek()) => {
+        const e = new Error(msg);
+        e.offset = tok.start ?? 0;
+        e.token = tok;
+        throw e;
+      };
+      const expect = (k, what) => {
+        if (check(k)) return advance();
+        err(`expected ${what}, found ${peek().kind === 'eof' ? 'end of query' : `'${peek().value}'`}`);
+      };
+
+      function parseSelect() {
+        expect('select', 'SELECT');
+        const distinct = !!match('distinct');
+        const columns = [selectCol()];
+        while (match(',')) columns.push(selectCol());
+        let table = null, alias = null;
+        const joins = [];
+        if (match('from')) {
+          table = identRaw();
+          if (check('ident')) alias = advance().value;
+          else if (match('as')) alias = expect('ident', 'an alias').value;
+          while (check('join', 'inner', 'left')) {
+            let kind = 'inner';
+            if (match('left')) kind = 'left';
+            else match('inner');
+            expect('join', 'JOIN');
+            const jt = identRaw();
+            let jalias = null;
+            if (check('ident')) jalias = advance().value;
+            else if (match('as')) jalias = expect('ident', 'an alias').value;
+            expect('on', 'ON');
+            const cond = orExpr();
+            joins.push({ kind, table: jt, alias: jalias, cond });
+          }
+        }
+        let where = null;
+        if (match('where')) where = orExpr();
+        let groupBy = null, having = null;
+        if (match('group')) {
+          expect('by', 'BY');
+          groupBy = [orExpr()];
+          while (match(',')) groupBy.push(orExpr());
+          if (match('having')) having = orExpr();
+        }
+        let orderBy = null;
+        if (match('order')) {
+          expect('by', 'BY');
+          orderBy = [orderItem()];
+          while (match(',')) orderBy.push(orderItem());
+        }
+        let limit = null, offset = null;
+        if (match('limit')) limit = expect('number', 'a number').value;
+        if (match('offset')) offset = expect('number', 'a number').value;
+        match(';');
+        if (!check('eof')) err(`unexpected '${peek().value}' after query`);
+        return { type: 'Select', distinct, columns, table, alias, joins, where, groupBy, having, orderBy, limit, offset };
+      }
+      function selectCol() {
+        if (check('*')) { const t = advance(); return { type: 'Star', table: null }; }
+        // qualified star: ident . *
+        if (check('ident') && tokens[pos+1]?.kind === '.' && tokens[pos+2]?.kind === '*') {
+          const t = advance(); advance(); advance();
+          return { type: 'Star', table: t.value };
+        }
+        const expr = orExpr();
+        let alias = null;
+        if (match('as')) alias = expect('ident', 'an alias').value;
+        else if (check('ident')) alias = advance().value;
+        return { type: 'Col', expr, alias };
+      }
+      function orderItem() {
+        const expr = orExpr();
+        let dir = 'asc';
+        if (match('asc')) dir = 'asc';
+        else if (match('desc')) dir = 'desc';
+        return { expr, dir };
+      }
+      function identRaw() {
+        const t = expect('ident', 'a table name');
+        return t.value;
+      }
+      function ident() {
+        const t = expect('ident', 'a table or column name');
+        // qualified: a.b
+        if (check('.') && tokens[pos+1]?.kind === 'ident') {
+          advance();
+          const b = advance();
+          return { kind: 'qualified', table: t.value, name: b.value, raw: t.value + '.' + b.value };
+        }
+        return { kind: 'ident', name: t.value, raw: t.value };
+      }
+      function orExpr() {
+        let left = andExpr();
+        while (check('or')) { const t = advance(); left = { type: 'Binary', op: 'or', left, right: andExpr() }; }
+        return left;
+      }
+      function andExpr() {
+        let left = notExpr();
+        while (check('and')) { advance(); left = { type: 'Binary', op: 'and', left, right: notExpr() }; }
+        return left;
+      }
+      function notExpr() {
+        if (check('not')) { advance(); return { type: 'Unary', op: 'not', operand: notExpr() }; }
+        return comparison();
+      }
+      function comparison() {
+        let left = sum();
+        if (check('=', '<', '>', '<=', '>=', '<>', '!=', 'like', 'is', 'in', 'not')) {
+          if (check('not') && (tokens[pos+1]?.kind === 'like' || tokens[pos+1]?.kind === 'in')) {
+            advance(); // NOT
+            const op = advance().kind; // like/in
+            if (op === 'in') {
+              expect('(', "'('");
+              const list = [sum()];
+              while (match(',')) list.push(sum());
+              expect(')', "')'");
+              return { type: 'In', left, list, negated: true };
+            }
+            return { type: 'Like', left, pattern: sum(), negated: true };
+          }
+          if (check('is')) {
+            advance();
+            let neg = false;
+            if (match('not')) neg = true;
+            expect('null', 'NULL');
+            return { type: 'IsNull', left, negated: neg };
+          }
+          if (check('in')) {
+            advance();
+            expect('(', "'('");
+            const list = [sum()];
+            while (match(',')) list.push(sum());
+            expect(')', "')'");
+            return { type: 'In', left, list, negated: false };
+          }
+          if (check('like')) {
+            advance();
+            return { type: 'Like', left, pattern: sum(), negated: false };
+          }
+          if (check('between')) {
+            advance();
+            const lo = sum();
+            expect('and', 'AND');
+            const hi = sum();
+            return { type: 'Binary', op: 'and', left: { type: 'Cmp', op: '>=', left, right: lo }, right: { type: 'Cmp', op: '<=', left, right: hi } };
+          }
+          const t = advance();
+          const op = t.kind === '!=' ? '<>' : t.kind;
+          return { type: 'Cmp', op, left, right: sum() };
+        }
+        return left;
+      }
+      function sum() {
+        let left = product();
+        while (check('+', '-')) { const t = advance(); left = { type: 'Arith', op: t.kind, left, right: product() }; }
+        return left;
+      }
+      function product() {
+        let left = unary();
+        while (check('*', '/', '%')) { const t = advance(); left = { type: 'Arith', op: t.kind, left, right: unary() }; }
+        return left;
+      }
+      function unary() {
+        if (check('-')) { advance(); return { type: 'Neg', operand: unary() }; }
+        return primary();
+      }
+      function primary() {
+        if (check('number')) { const t = advance(); return { type: 'Lit', value: t.value }; }
+        if (check('string')) { const t = advance(); return { type: 'Lit', value: t.value }; }
+        if (check('null')) { advance(); return { type: 'Lit', value: null }; }
+        if (check('*')) err("'*' is not valid here");
+        if (check('ident')) {
+          const t = advance();
+          // function call
+          if (check('(')) {
+            advance();
+            const name = t.value.toUpperCase();
+            let distinct = false, arg = null;
+            if (name === 'COUNT' || name === 'SUM' || name === 'AVG' || name === 'MIN' || name === 'MAX') {
+              if (check('distinct')) { advance(); distinct = true; }
+              if (check('*')) { advance(); arg = { type: 'StarArg' }; }
+              else arg = orExpr();
+            } else {
+              // unknown function — still parse arg list
+              if (!check(')')) arg = orExpr();
+            }
+            expect(')', "')'");
+            if (!['COUNT','SUM','AVG','MIN','MAX'].includes(name)) err(`unknown function '${t.value}'`);
+            return { type: 'Agg', name, arg, distinct };
+          }
+          // qualified name a.b
+          if (check('.') && tokens[pos+1]?.kind === 'ident') {
+            advance();
+            const b = advance();
+            return { type: 'ColRef', table: t.value, name: b.value };
+          }
+          return { type: 'ColRef', table: null, name: t.value };
+        }
+        if (check('(')) {
+          advance();
+          const e = orExpr();
+          expect(')', "')'");
+          return e;
+        }
+        err(`expected a value, found ${peek().kind === 'eof' ? 'end of query' : `'${peek().value}'`}`);
+      }
+
+      const ast = parseSelect();
+      return ast;
+    }
+
+    // === Executor ===
+    // three-valued logic: null = unknown
+    function truth3(v) { return v === null ? null : !!v; }
+    function and3(a, b) {
+      if (a === false || b === false) return false;
+      if (a === null || b === null) return null;
+      return true;
+    }
+    function or3(a, b) {
+      if (a === true || b === true) return true;
+      if (a === null || b === null) return null;
+      return false;
+    }
+    function not3(a) { return a === null ? null : !a; }
+
+    function execute(ast, db) {
+      // build row stream from FROM + joins
+      const baseName = ast.table;
+      if (!baseName) {
+        // SELECT without FROM: one empty row
+        if (ast.joins.length) { const e = new Error('JOIN requires FROM'); e.semantic = true; throw e; }
+        const outCols = [];
+        for (const c of ast.columns) {
+          if (c.type === 'Star') continue;
+          outCols.push({ name: c.alias || exprName(c.expr), kind: 'expr', expr: c.expr, alias: c.alias || exprName(c.expr) });
+        }
+        const empty = {};
+        const resultRow = outCols.map(oc => {
+          if (oc.kind === 'ref') return null;
+          return evalExpr(oc.expr, { __group: [empty] }, db, ast, [empty]);
+        });
+        return { columns: outCols.map(oc => oc.name), rows: [resultRow] };
+      }
+      if (!db[baseName]) {
+        const e = new Error(`unknown table '${baseName}' — tables are: ${Object.keys(db).join(', ')}`);
+        e.semantic = true;
+        throw e;
+      }
+      const sources = [{ alias: ast.alias || baseName, table: baseName }];
+      // resolve each join's table
+      for (const j of ast.joins) {
+        if (!db[j.table]) {
+          const e = new Error(`unknown table '${j.table}' — tables are: ${Object.keys(db).join(', ')}`);
+          e.semantic = true;
+          throw e;
+        }
+        sources.push({ alias: j.alias || j.table, table: j.table, join: j });
+      }
+
+      // each row: Map of "alias.col" and "col" → value, plus "_" source map
+      function rowFrom(table, alias, dbRow) {
+        const cols = db[table].columns;
+        const m = { __alias: alias, __table: table };
+        cols.forEach((c, i) => {
+          m[`${alias}.${c}`] = dbRow[i];
+          // bare col set later with ambiguity check
+        });
+        return m;
+      }
+      function setBare(m, alias, cols, overwrite = false) {
+        for (const c of cols) {
+          const key = `${alias}.${c}`;
+          if (m[c] === undefined || overwrite) m[c] = m[key];
+        }
+      }
+
+      let rows = db[baseName].rows.map(r => rowFrom(baseName, ast.alias || baseName, r));
+      setBareRows(rows, ast.alias || baseName, baseName, db);
+
+      for (const j of ast.joins) {
+        const jAlias = j.alias || j.table;
+        const rightRows = db[j.table].rows.map(r => rowFrom(j.table, jAlias, r));
+        const out = [];
+        for (const left of rows) {
+          let matched = false;
+          for (const right of rightRows) {
+            const merged = { ...left };
+            for (const k of Object.keys(right)) {
+              if (k === '__alias' || k === '__table') continue;
+              merged[k] = right[k];
+            }
+            merged[`__right:${jAlias}`] = true;
+            // set bare names for right table
+            const cols = db[j.table].columns;
+            for (const c of cols) {
+              if (merged[`${jAlias}.${c}`] !== undefined && (merged[c] === undefined)) {
+                merged[c] = merged[`${jAlias}.${c}`];
+              }
+            }
+            const cond = evalExpr(j.cond, merged, db, ast);
+            if (cond === true) { out.push(merged); matched = true; }
+          }
+          if (!matched && j.kind === 'left') {
+            // left row with nulls for right
+            const merged = { ...left };
+            const cols = db[j.table].columns;
+            for (const c of cols) {
+              merged[`${jAlias}.${c}`] = null;
+              if (merged[c] === undefined) merged[c] = null;
+            }
+            out.push(merged);
+          }
+        }
+        rows = out;
+      }
+
+      // WHERE
+      if (ast.where) {
+        rows = rows.filter(r => evalExpr(ast.where, r, db, ast) === true);
+      }
+
+      // aggregation
+      const hasAgg = ast.columns.some(c => c.type === 'Star' ? false : containsAgg(c.expr)) ||
+        (ast.groupBy && ast.groupBy.length) || (ast.having && containsAgg(ast.having)) ||
+        ast.columns.some(c => c.type === 'Col' && containsAgg(c.expr));
+
+      let groups;
+      let groupKeys = [];
+      if (ast.groupBy) {
+        const map = new Map();
+        for (const r of rows) {
+          const key = ast.groupBy.map(g => JSON.stringify(evalExpr(g, r, db, ast))).join('\u0000');
+          if (!map.has(key)) { map.set(key, { rows: [], keyVals: ast.groupBy.map(g => evalExpr(g, r, db, ast)) }); }
+          map.get(key).rows.push(r);
+        }
+        groups = [...map.values()];
+        groupKeys = ast.groupBy;
+      } else if (hasAgg) {
+        // single group even if empty (COUNT returns 0)
+        groups = [{ rows, keyVals: [] }];
+      } else {
+        groups = rows.map(r => ({ rows: [r], keyVals: [] }));
+      }
+
+      // HAVING
+      if (ast.having) {
+        groups = groups.filter(g => {
+          const r = g.rows[0];
+          const ctx = { ...r, __group: g.rows };
+          return evalExpr(ast.having, ctx, db, ast, g.rows) === true;
+        });
+      }
+
+      // project
+      let output = [];
+      let colNames = [];
+      // determine output columns
+      const outCols = [];
+      for (const c of ast.columns) {
+        if (c.type === 'Star') {
+          const tableName = c.table;
+          for (const s of sources) {
+            if (tableName && s.alias !== tableName && s.table !== tableName) continue;
+            for (const col of db[s.table].columns) {
+              outCols.push({ name: `${s.alias}.${col}`, kind: 'ref', alias: s.alias, col });
+            }
+          }
+          // for simple SELECT *, prefer bare names if single table
+          if (sources.length === 1 && !tableName) {
+            outCols.length = 0;
+            for (const col of db[sources[0].table].columns) {
+              outCols.push({ name: col, kind: 'ref', alias: sources[0].alias, col });
+            }
+          }
+        } else {
+          outCols.push({ name: c.alias || exprName(c.expr), kind: 'expr', expr: c.expr, alias: c.alias || exprName(c.expr) });
+        }
+      }
+
+      for (const g of groups) {
+        const r = g.rows[0] || {};
+        const ctx = { ...r, __group: g.rows };
+        const outRow = outCols.map(oc => {
+          if (oc.kind === 'ref') {
+            const key = `${oc.alias}.${oc.col}`;
+            const m = g.rows[0];
+            if (m && m[key] !== undefined) return m[key];
+            if (m && m[oc.col] !== undefined) return m[oc.col];
+            return null;
+          }
+          return evalExpr(oc.expr, ctx, db, ast, g.rows);
+        });
+        output.push(outRow);
+      }
+      colNames = outCols.map(oc => oc.name);
+
+      // DISTINCT
+      if (ast.distinct) {
+        const seen = new Set();
+        output = output.filter(row => {
+          const k = JSON.stringify(row);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+
+      // ORDER BY — sort by expr evaluated on group ctx / original rows
+      if (ast.orderBy) {
+        const makeKey = (rowIdx) => {
+          const g = groups[rowIdx];
+          const r = g.rows[0] || {};
+          const ctx = { ...r, __group: g.rows };
+          return ast.orderBy.map(o => {
+            let v;
+            // try to resolve by output name first (alias)
+            const name = exprName(o.expr);
+            const ocIdx = outCols.findIndex(oc => oc.name === name || oc.alias === name);
+            if (ocIdx >= 0) v = output[rowIdx][ocIdx];
+            else v = evalExpr(o.expr, ctx, db, ast, g.rows);
+            return { v, dir: o.dir };
+          });
+        };
+        // only sort if groups align with output — when no agg, groups[i] corresponds to output[i]
+        if (output.length === groups.length) {
+          const idxs = output.map((_, i) => i);
+          idxs.sort((ia, ib) => {
+            const ka = makeKey(ia), kb = makeKey(ib);
+            for (let i = 0; i < ka.length; i++) {
+              const { v: va, dir } = ka[i];
+              const { v: vb } = kb[i];
+              const nullA = va === null, nullB = vb === null;
+              if (nullA && nullB) continue;
+              if (nullA) return dir === 'asc' ? 1 : -1; // nulls last for asc? SQL default varies; use nulls last asc
+              if (nullB) return dir === 'asc' ? -1 : 1;
+              let cmp;
+              if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+              else cmp = String(va) < String(vb) ? -1 : String(va) > String(vb) ? 1 : 0;
+              if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
+            }
+            return 0;
+          });
+          output = idxs.map(i => output[i]);
+        }
+      }
+
+      // LIMIT / OFFSET
+      if (ast.offset) output = output.slice(ast.offset);
+      if (ast.limit !== null && ast.limit !== undefined) output = output.slice(0, ast.limit);
+
+      return { columns: colNames, rows: output };
+    }
+
+    function setBareRows(rows, alias, table, db) {
+      const cols = db[table].columns;
+      for (const r of rows) {
+        for (const c of cols) {
+          r[c] = r[`${alias}.${c}`];
+        }
+      }
+    }
+
+    function exprName(e) {
+      switch (e.type) {
+        case 'ColRef': return e.table ? `${e.table}.${e.name}` : e.name;
+        case 'Lit': return e.value === null ? 'null' : String(e.value);
+        case 'Agg': return `${e.name.toLowerCase()}(${e.arg?.type === 'StarArg' ? '*' : exprName(e.arg)})`;
+        case 'Arith': return `${exprName(e.left)}${e.op}${exprName(e.right)}`;
+        case 'Cmp': return `${exprName(e.left)}${e.op}${exprName(e.right)}`;
+        case 'Binary': return `${exprName(e.left)} ${e.op} ${exprName(e.right)}`;
+        case 'Unary': return `not ${exprName(e.operand)}`;
+        case 'Neg': return `-${exprName(e.operand)}`;
+        case 'IsNull': return `${exprName(e.left)} is null`;
+        case 'Like': return `${exprName(e.left)} like ${exprName(e.pattern)}`;
+        case 'In': return `${exprName(e.left)} in (...)`;
+        default: return '?';
+      }
+    }
+
+    function containsAgg(e) {
+      if (!e || typeof e !== 'object') return false;
+      if (e.type === 'Agg') return true;
+      return ['left','right','operand','arg','pattern'].some(k => containsAgg(e[k])) ||
+        (Array.isArray(e.list) && e.list.some(containsAgg));
+    }
+
+    function evalExpr(e, row, db, ast, groupRows) {
+      switch (e.type) {
+        case 'Lit': return e.value;
+        case 'ColRef': {
+          const keys = e.table ? [`${e.table}.${e.name}`] : [e.name, `${e.name}`];
+          // ambiguity: if bare and appears in multiple aliases — prefer exact
+          if (e.table) {
+            const k = `${e.table}.${e.name}`;
+            if (row[k] === undefined && row[e.table] === undefined) {
+              // try if e.table is an alias that exists
+              if (row[k] === undefined) {
+                const err = new Error(`ambiguous column name ${e.name}: qualified as ${k} but not found`);
+                // check bare for better message
+                if (row[e.name] !== undefined) return row[e.name];
+                err.semantic = true;
+                throw err;
+              }
+            }
+            if (!(k in row) && row[e.name] === undefined) {
+              const err = new Error(`no such column: ${k}`);
+              err.semantic = true;
+              throw err;
+            }
+            return k in row ? row[k] : row[e.name];
+          }
+          if (row[e.name] === undefined) {
+            // search all alias-qualified
+            const hits = Object.keys(row).filter(k => k.endsWith('.' + e.name));
+            if (hits.length === 1) return row[hits[0]];
+            if (hits.length > 1) {
+              const err = new Error(`ambiguous column name ${e.name}: it appears in ${hits.map(h => h.split('.')[0]).join(' and ')}`);
+              err.semantic = true;
+              throw err;
+            }
+            const err = new Error(`no such column: ${e.name}`);
+            err.semantic = true;
+            throw err;
+          }
+          return row[e.name];
+        }
+        case 'Neg': {
+          const v = evalExpr(e.operand, row, db, ast, groupRows);
+          return v === null ? null : -v;
+        }
+        case 'Unary': {
+          if (e.op === 'not') return not3(evalExpr(e.operand, row, db, ast, groupRows));
+          throw new Error('unknown unary');
+        }
+        case 'Arith': {
+          const l = evalExpr(e.left, row, db, ast, groupRows);
+          const r = evalExpr(e.right, row, db, ast, groupRows);
+          if (l === null || r === null) return null;
+          switch (e.op) {
+            case '+': return l + r;
+            case '-': return l - r;
+            case '*': return l * r;
+            case '/': return r === 0 ? null : l / r; // SQL: div by zero → null error; use null
+            case '%': return r === 0 ? null : l % r;
+          }
+          throw new Error('bad arith');
+        }
+        case 'Cmp': {
+          const l = evalExpr(e.left, row, db, ast, groupRows);
+          const r = evalExpr(e.right, row, db, ast, groupRows);
+          if (l === null || r === null) return null;
+          // type coerce numbers/strings loosely for comparisons
+          let a = l, b = r;
+          if (typeof a === 'number' || typeof b === 'number') {
+            a = typeof a === 'number' ? a : (a !== null && a !== '' && !isNaN(a) ? Number(a) : a);
+            b = typeof b === 'number' ? b : (b !== null && b !== '' && !isNaN(b) ? Number(b) : b);
+          }
+          switch (e.op) {
+            case '=': return a === b;
+            case '<>': return a !== b;
+            case '<': return a < b;
+            case '>': return a > b;
+            case '<=': return a <= b;
+            case '>=': return a >= b;
+          }
+          throw new Error('bad cmp');
+        }
+        case 'Binary': {
+          if (e.op === 'and') return and3(evalExpr(e.left, row, db, ast, groupRows), evalExpr(e.right, row, db, ast, groupRows));
+          if (e.op === 'or') return or3(evalExpr(e.left, row, db, ast, groupRows), evalExpr(e.right, row, db, ast, groupRows));
+          throw new Error('bad binary');
+        }
+        case 'IsNull': {
+          const v = evalExpr(e.left, row, db, ast, groupRows);
+          const isNull = v === null;
+          return e.negated ? !isNull : isNull;
+        }
+        case 'Like': {
+          const v = evalExpr(e.left, row, db, ast, groupRows);
+          const p = evalExpr(e.pattern, row, db, ast, groupRows);
+          if (v === null || p === null) return null;
+          const re = likeToRegex(String(p));
+          const m = re.test(String(v));
+          return e.negated ? !m : m;
+        }
+        case 'In': {
+          const v = evalExpr(e.left, row, db, ast, groupRows);
+          if (v === null) return null;
+          let sawNull = false;
+          for (const item of e.list) {
+            const iv = evalExpr(item, row, db, ast, groupRows);
+            if (iv === null) { sawNull = true; continue; }
+            if (v === iv) return !e.negated;
+          }
+          if (sawNull) return null;
+          return e.negated;
+        }
+        case 'Agg': {
+          const rows = groupRows || (row && row.__group) || [];
+          return aggregate(e, rows, row, db, ast);
+        }
+        default:
+          throw new Error(`cannot evaluate ${e.type}`);
+      }
+    }
+
+    function likeToRegex(pattern) {
+      let re = '^';
+      for (let i = 0; i < pattern.length; i++) {
+        const c = pattern[i];
+        if (c === '%' ) re += '[\\s\\S]*';
+        else if (c === '_') re += '[\\s\\S]';
+        else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+      re += '$';
+      return new RegExp(re, 'i');
+    }
+
+    function aggregate(agg, rows, row, db, ast) {
+      const vals = [];
+      if (agg.arg && agg.arg.type === 'StarArg') {
+        // COUNT(*)
+        if (agg.name === 'COUNT') return rows.length;
+        throw new Error(`${agg.name}(*) is not valid`);
+      }
+      for (const r of rows) {
+        const ctx = { ...r, __group: rows };
+        let v;
+        try { v = evalExpr(agg.arg, ctx, db, ast, rows); } catch (e) { v = null; }
+        if (v !== null && v !== undefined) vals.push(v);
+      }
+      if (agg.distinct) {
+        const seen = new Set();
+        const u = [];
+        for (const v of vals) {
+          const k = JSON.stringify(v);
+          if (!seen.has(k)) { seen.add(k); u.push(v); }
+        }
+        vals.length = 0;
+        vals.push(...u);
+      }
+      switch (agg.name) {
+        case 'COUNT': return vals.length;
+        case 'SUM': return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+        case 'AVG': return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+        case 'MIN': return vals.length ? vals.reduce((a, b) => (b < a ? b : a)) : null;
+        case 'MAX': return vals.length ? vals.reduce((a, b) => (b > a ? b : a)) : null;
+      }
+      throw new Error('bad agg');
+    }
+
+    // non-agg columns must be in GROUP BY
+    function checkGroupBy(ast) {
+      if (!ast.groupBy && !ast.columns.some(c => c.type === 'Col' && containsAgg(c.expr))) return;
+      if (!ast.groupBy && ast.columns.some(c => c.type === 'Col' && containsAgg(c.expr))) {
+        // mixing agg and bare cols without group by
+        const aggCols = ast.columns.filter(c => c.type === 'Col' && containsAgg(c.expr));
+        const bare = ast.columns.filter(c => c.type === 'Col' && !containsAgg(c.expr) && !isStar(c));
+        if (aggCols.length && bare.length) {
+          const e = new Error(`'${exprName(bare[0].expr)}' is not in GROUP BY and is not an aggregate — add it to GROUP BY or wrap it in one`);
+          e.semantic = true;
+          throw e;
+        }
+        return;
+      }
+      if (ast.groupBy) {
+        const groupExprs = new Set(ast.groupBy.map(exprName));
+        const aggCols = ast.columns.filter(c => c.type === 'Col' && containsAgg(c.expr));
+        const bare = ast.columns.filter(c => c.type === 'Col' && !containsAgg(c.expr));
+        if (aggCols.length || ast.having) {
+          for (const c of bare) {
+            const n = exprName(c.expr);
+            if (!groupExprs.has(n)) {
+              const e = new Error(`'${n}' is not in GROUP BY and is not an aggregate — add it to GROUP BY or wrap it in one`);
+              e.semantic = true;
+              throw e;
+            }
+          }
+        }
+      }
+    }
+    function isStar(c) { return c.type === 'Star'; }
+
+    // === UI ===
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+    const PRESETS = {
+      products: `SELECT * FROM products LIMIT 5`,
+      revenue: `SELECT p.category, SUM(i.quantity * i.unit_price) AS revenue
+FROM order_items i
+JOIN products p ON p.id = i.product_id
+GROUP BY p.category
+ORDER BY revenue DESC`,
+      nulls: `SELECT COUNT(*) AS all_rows, COUNT(city) AS with_city, COUNT(score) AS with_score
+FROM customers`,
+      join: `SELECT c.name, o.id, o.status
+FROM customers c
+LEFT JOIN orders o ON o.customer_id = c.id
+WHERE o.status IS NULL OR o.status = 'pending'
+ORDER BY c.name
+LIMIT 10`,
+      having: `SELECT status, COUNT(*) AS n
+FROM orders
+GROUP BY status
+HAVING COUNT(*) > 5
+ORDER BY n DESC`,
+      like: `SELECT name, city FROM customers WHERE city LIKE 'L%' ORDER BY name`,
+      err: `SELECT name, city FROM customers WHERE city = 'Lahore' ORDER BY`,
+      sem: `SELECT city, name, COUNT(*) FROM customers GROUP BY city`,
+    };
+
+    let currentSchemaTable = 'products';
+
+    function renderSchema(table) {
+      currentSchemaTable = table;
+      document.querySelectorAll('.schema-tabs button').forEach(b => {
+        b.classList.toggle('active', b.dataset.t === table);
+      });
+      const t = DB[table];
+      $('schemaBody').innerHTML = t.columns.map((c, i) => {
+        const notes = [];
+        if (t.rows.some(r => r[i] === null)) notes.push('nullable');
+        return `<tr><td>${esc(c)}</td><td><span class="pill ${t.types[i]}">${t.types[i]}</span></td><td class="muted">${notes.join(', ') || '—'}</td></tr>`;
+      }).join('');
+      $('rowCount').textContent = `${t.rows.length} rows · column types inferred per column`;
+      // preview
+      $('dataHead').innerHTML = '<tr>' + t.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+      $('dataBody').innerHTML = t.rows.slice(0, 8).map(r =>
+        '<tr>' + r.map(v => v === null ? '<td><span class="pill null">NULL</span></td>' :
+          `<td>${esc(String(v))}</td>`).join('') + '</tr>'
+      ).join('');
+    }
+
+    function run() {
+      const sql = $('sql').value;
+      const out = $('out');
+      try {
+        const tokens = tokenize(sql);
+        const ast = parse(tokens, sql);
+        checkGroupBy(ast);
+        const result = execute(ast, DB);
+        $('ast').hidden = false;
+        $('ast').textContent = JSON.stringify(ast, (k, v) => k.startsWith('start') || k.startsWith('end') ? undefined : v, 2).slice(0, 2000);
+        if (!result.rows.length && result.columns.length) {
+          out.innerHTML = `<div class="finding ok"><span class="kind">0 rows</span><div class="detail">Query ran successfully — no rows matched.</div></div>
+            <div class="table-wrap"><table><thead><tr>${result.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
+          return;
+        }
+        if ($('fmt').value === 'csv') {
+          const csv = [result.columns.join(','),
+            ...result.rows.map(r => r.map(v => v === null ? '' : typeof v === 'string' && v.includes(',') ? `"${v}"` : String(v)).join(','))]
+            .join('\n');
+          out.innerHTML = `<div class="result-box">${esc(csv)}</div>`;
+          return;
+        }
+        out.innerHTML = renderTable(result) +
+          `<div class="muted" style="font-size:13px;margin-top:6px">${result.rows.length} row(s)</div>`;
+      } catch (e) {
+        const off = e.offset ?? 0;
+        const caret = ' '.repeat(off) + '^';
+        out.innerHTML = `<div class="finding risk">
+          <span class="kind">${e.semantic ? 'semantic error' : 'parse error'}</span>
+          <div class="detail">error: ${esc(e.message)}
+${esc(sql)}
+<span class="caret">${caret}</span></div>
+        </div>`;
+        $('ast').hidden = true;
+      }
+    }
+
+    function renderTable(result) {
+      let h = '<div class="table-wrap"><table><thead><tr>' +
+        result.columns.map(c => `<th>${esc(c)}</th>`).join('') +
+        '</tr></thead><tbody>';
+      for (const row of result.rows) {
+        h += '<tr>' + row.map(v => {
+          if (v === null || v === undefined) return '<td><span class="pill null">NULL</span></td>';
+          if (typeof v === 'number') {
+            const shown = Number.isInteger(v) ? v : Math.round(v * 100) / 100;
+            return `<td>${shown}</td>`;
+          }
+          return `<td>${esc(String(v))}</td>`;
+        }).join('') + '</tr>';
+      }
+      h += '</tbody></table></div>';
+      return h;
+    }
+
+    // schema tabs
+    $('schemaTabs').innerHTML = Object.keys(DB).map(t =>
+      `<button data-t="${t}" class="${t === currentSchemaTable ? 'active' : ''}">${t} (${DB[t].rows.length})</button>`
+    ).join('');
+    document.querySelectorAll('.schema-tabs button').forEach(b => {
+      b.addEventListener('click', () => renderSchema(b.dataset.t));
+    });
+
+    document.querySelectorAll('.presets button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $('sql').value = PRESETS[btn.dataset.q];
+        run();
+      });
+    });
+    $('runBtn').addEventListener('click', run);
+    $('sql').addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+    });
+    $('fmt').addEventListener('change', run);
+
+    renderSchema('products');
+    run();
+  </script>
+</body>
+</html>
