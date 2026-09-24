@@ -477,6 +477,13 @@ footer a:hover { color: var(--accent); }
     scroll-behavior: auto !important;
   }
 }
+
+.copy-btn2 {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; color: var(--text-secondary);
+}
+.copy-btn2:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -520,7 +527,7 @@ footer a:hover { color: var(--accent); }
         </label>
       </div>
       <div id="out" style="margin-top:12px" aria-live="polite"></div>
-      <div id="ast" class="result-box" hidden aria-live="polite"></div>
+      <div id="ast" data-copyable class="result-box" hidden aria-live="polite"><button type="button" class="copy-btn2" data-copy-target="#ast" style="margin-bottom:8px">Copy AST</button></div>
     </section>
 
     <section class="card">
@@ -1690,6 +1697,30 @@ ${esc(sql)}
 
     renderSchema('products');
     run();
+  
+function bindCopy(root=document){
+  root.querySelectorAll('[data-copy-target]').forEach(btn=>{
+    if(btn.dataset.bound) return;
+    btn.dataset.bound='1';
+    btn.addEventListener('click', async ()=>{
+      const sel=btn.getAttribute('data-copy-target');
+      const el=document.querySelector(sel);
+      if(!el) return;
+      const text=(el.innerText||el.textContent||'').trim();
+      try{
+        await navigator.clipboard.writeText(text);
+        const old=btn.textContent;
+        btn.textContent='Copied';
+        setTimeout(()=>{btn.textContent=old;},1200);
+      }catch(e){
+        btn.textContent='Copy failed';
+        setTimeout(()=>{btn.textContent='Copy';},1200);
+      }
+    });
+  });
+}
+
+  bindCopy();
   </script>
 
   </main>
