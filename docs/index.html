@@ -509,7 +509,7 @@ footer a:hover { color: var(--accent); }
 
     <section class="card">
       <h2><span class="section-num">1</span> SQL playground</h2>
-      <p class="muted" style="margin-top:0">Four CSV tables loaded. Write a query and press <b>Run</b> (or ⌘/Ctrl+Enter). Errors point at the character that caused them.</p>
+      <p class="muted" style="margin-top:0">Four CSV tables loaded. Write a query — or an INSERT, UPDATE or DELETE — and press <b>Run</b> (or ⌘/Ctrl+Enter). Errors point at the character that caused them.</p>
       <div class="presets">
         <button data-q="products" type="button">products</button>
         <button data-q="revenue" type="button">revenue by category</button>
@@ -519,11 +519,18 @@ footer a:hover { color: var(--accent); }
         <button data-q="like" type="button">like pattern</button>
         <button data-q="err" type="button">parse error</button>
         <button data-q="sem" type="button">semantic error</button>
+        <button data-q="case" type="button">case</button>
+        <button data-q="union" type="button">union</button>
+        <button data-q="insert" type="button">insert</button>
+        <button data-q="update" type="button">update</button>
+        <button data-q="delete" type="button">delete</button>
       </div>
       <label for="sql">Query</label>
       <textarea id="sql" rows="5" spellcheck="false">SELECT * FROM products LIMIT 5</textarea>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="runBtn" type="button">Run</button>
+        <button id="resetData" type="button">Reset data</button>
+        <span class="muted" id="dataNote" style="font-size:13px" aria-live="polite"></span>
         <label style="margin:0;font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px">
           format <select id="fmt" style="width:auto;padding:6px 8px"><option value="table">table</option><option value="csv">csv</option></select>
         </label>
@@ -575,7 +582,7 @@ FROM customers;
     <section class="card">
       <h2><span class="section-num">6</span> What it supports</h2>
       <p><code>SELECT [DISTINCT]</code>, expressions with <code>+ - * / %</code>, aliases, <code>INNER|LEFT JOIN … ON</code>, <code>WHERE</code> with <code>AND/OR/NOT</code>, comparisons, <code>IS [NOT] NULL</code>, <code>[NOT] IN</code>, <code>[NOT] LIKE 'a%_'</code>, <code>GROUP BY</code> + <code>HAVING</code>, aggregates (<code>COUNT SUM AVG MIN MAX</code> incl. <code>DISTINCT</code>), <code>ORDER BY</code>, <code>LIMIT/OFFSET</code>.</p>
-      <p class="muted" style="margin-bottom:0"><b>Not supported:</b> INSERT/UPDATE/DELETE, subqueries, UNION, window functions, CASE, RIGHT/FULL JOIN. Joins are nested-loop — suited to files that fit in memory.</p>
+      <p class="muted" style="margin-bottom:0"><b>Not supported:</b> subqueries, window functions, RIGHT/FULL JOIN, CREATE/DROP TABLE. Joins are nested-loop — suited to files that fit in memory. INSERT, UPDATE and DELETE change the tables in this page only (the CLI writes back to CSV with <code>.save</code>).</p>
     </section>
 
     <section class="card">
@@ -703,7 +710,7 @@ FROM customers;
       </section>
     </div>
 
-    <footer>113 tests · 94% coverage · Python 3.10–3.12 · Built by <a href="https://github.com/umer-78">Umer Hashmi</a></footer>
+    <footer>139 tests · 95% coverage · Python 3.10–3.12 · Built by <a href="https://github.com/umer-78">Umer Hashmi</a></footer>
   </div>
 
   <script>
@@ -830,7 +837,8 @@ FROM customers;
     };
 
     // === Tokenizer ===
-    const KEYWORDS = new Set(['select','from','where','and','or','not','null','is','in','like','join','inner','left','on','group','by','having','order','asc','desc','limit','offset','distinct','as','between']);
+    const KEYWORDS = new Set(['select','from','where','and','or','not','null','is','in','like','join','inner','left','on','group','by','having','order','asc','desc','limit','offset','distinct','as','between',
+      'case','when','then','else','end','union','all','insert','into','values','update','set','delete']);
     function tokenize(sql) {
       const tokens = [];
       let i = 0;
@@ -843,7 +851,10 @@ FROM customers;
         // string
         if (ch === "'") {
           let j = i + 1, s = '';
-          while (j < sql.length && sql[j] !== "'") { s += sql[j]; j++; }
+          while (j < sql.length) {
+            if (sql[j] === "'") { if (sql[j + 1] === "'") { s += "'"; j += 2; continue; } break; }
+            s += sql[j]; j++;
+          }
           if (j >= sql.length) err('unterminated string', start);
           tokens.push({ kind: 'string', value: s, start, end: j + 1 });
           i = j + 1; continue;
@@ -931,6 +942,17 @@ FROM customers;
           while (match(',')) groupBy.push(orExpr());
           if (match('having')) having = orExpr();
         }
+        return { type: 'Select', distinct, columns, table, alias, joins, where, groupBy, having, orderBy: null, limit: null, offset: null };
+      }
+      // ORDER BY / LIMIT after the last SELECT apply to the whole query (all UNION branches).
+      function parseQuery() {
+        const selects = [parseSelect()];
+        const all = [];
+        while (match('union')) {
+          all.push(!!match('all'));
+          if (!check('select')) err(`expected SELECT after UNION, found ${peek().kind === 'eof' ? 'end of query' : `'${peek().value}'`}`);
+          selects.push(parseSelect());
+        }
         let orderBy = null;
         if (match('order')) {
           expect('by', 'BY');
@@ -940,9 +962,60 @@ FROM customers;
         let limit = null, offset = null;
         if (match('limit')) limit = expect('number', 'a number').value;
         if (match('offset')) offset = expect('number', 'a number').value;
+        if (selects.length === 1) return { ...selects[0], orderBy, limit, offset };
+        return { type: 'Union', selects, all, orderBy, limit, offset };
+      }
+      function nameList() {
+        const names = [expect('ident', 'a column name').value];
+        while (match(',')) names.push(expect('ident', 'a column name').value);
+        return names;
+      }
+      function parseInsert() {
+        expect('insert', 'INSERT'); expect('into', 'INTO');
+        const table = identRaw();
+        let columns = null;
+        if (match('(')) { columns = nameList(); expect(')', "')'"); }
+        if (check('select')) return { type: 'Insert', table, columns, rows: null, select: parseQuery() };
+        expect('values', 'VALUES');
+        const rows = [];
+        do {
+          expect('(', "'('");
+          const row = [orExpr()];
+          while (match(',')) row.push(orExpr());
+          expect(')', "')'");
+          rows.push(row);
+        } while (match(','));
+        return { type: 'Insert', table, columns, rows, select: null };
+      }
+      function parseUpdate() {
+        expect('update', 'UPDATE');
+        const table = identRaw();
+        expect('set', 'SET');
+        const set = [];
+        do {
+          const column = expect('ident', 'a column name').value;
+          expect('=', "'='");
+          set.push({ column, expr: orExpr() });
+        } while (match(','));
+        const where = match('where') ? orExpr() : null;
+        return { type: 'Update', table, set, where };
+      }
+      function parseDelete() {
+        expect('delete', 'DELETE'); expect('from', 'FROM');
+        const table = identRaw();
+        const where = match('where') ? orExpr() : null;
+        return { type: 'Delete', table, where };
+      }
+      function parseStatement() {
+        let stmt;
+        if (check('insert')) stmt = parseInsert();
+        else if (check('update')) stmt = parseUpdate();
+        else if (check('delete')) stmt = parseDelete();
+        else if (check('select')) stmt = parseQuery();
+        else err(`expected SELECT, INSERT, UPDATE or DELETE, found ${peek().kind === 'eof' ? 'end of query' : `'${peek().value}'`}`);
         match(';');
         if (!check('eof')) err(`unexpected '${peek().value}' after query`);
-        return { type: 'Select', distinct, columns, table, alias, joins, where, groupBy, having, orderBy, limit, offset };
+        return stmt;
       }
       function selectCol() {
         if (check('*')) { const t = advance(); return { type: 'Star', table: null }; }
@@ -1057,6 +1130,16 @@ FROM customers;
         if (check('number')) { const t = advance(); return { type: 'Lit', value: t.value }; }
         if (check('string')) { const t = advance(); return { type: 'Lit', value: t.value }; }
         if (check('null')) { advance(); return { type: 'Lit', value: null }; }
+        if (check('case')) {
+          const start = advance();
+          const operand = check('when', 'else', 'end') ? null : orExpr();
+          const whens = [];
+          while (match('when')) { const when = orExpr(); expect('then', 'THEN'); whens.push({ when, then: orExpr() }); }
+          if (!whens.length) err('CASE needs at least one WHEN ... THEN', start);
+          const otherwise = match('else') ? orExpr() : null;
+          expect('end', 'END');
+          return { type: 'Case', operand, whens, else: otherwise };
+        }
         if (check('*')) err("'*' is not valid here");
         if (check('ident')) {
           const t = advance();
@@ -1094,8 +1177,7 @@ FROM customers;
         err(`expected a value, found ${peek().kind === 'eof' ? 'end of query' : `'${peek().value}'`}`);
       }
 
-      const ast = parseSelect();
-      return ast;
+      return parseStatement();
     }
 
     // === Executor ===
@@ -1363,6 +1445,7 @@ FROM customers;
         case 'IsNull': return `${exprName(e.left)} is null`;
         case 'Like': return `${exprName(e.left)} like ${exprName(e.pattern)}`;
         case 'In': return `${exprName(e.left)} in (...)`;
+        case 'Case': return 'case';
         default: return '?';
       }
     }
@@ -1370,8 +1453,9 @@ FROM customers;
     function containsAgg(e) {
       if (!e || typeof e !== 'object') return false;
       if (e.type === 'Agg') return true;
-      return ['left','right','operand','arg','pattern'].some(k => containsAgg(e[k])) ||
-        (Array.isArray(e.list) && e.list.some(containsAgg));
+      return ['left','right','operand','arg','pattern','else'].some(k => containsAgg(e[k])) ||
+        (Array.isArray(e.list) && e.list.some(containsAgg)) ||
+        (Array.isArray(e.whens) && e.whens.some(w => containsAgg(w.when) || containsAgg(w.then)));
     }
 
     function evalExpr(e, row, db, ast, groupRows) {
@@ -1485,6 +1569,19 @@ FROM customers;
           if (sawNull) return null;
           return e.negated;
         }
+        case 'Case': {
+          if (e.operand === null) {
+            for (const w of e.whens) if (evalExpr(w.when, row, db, ast, groupRows) === true) return evalExpr(w.then, row, db, ast, groupRows);
+          } else {
+            const v = evalExpr(e.operand, row, db, ast, groupRows);
+            // NULL never matches a WHEN (NULL = anything is unknown)
+            for (const w of e.whens) {
+              const c = evalExpr(w.when, row, db, ast, groupRows);
+              if (v !== null && c !== null && evalExpr({ type: 'Cmp', op: '=', left: { type: 'Lit', value: v }, right: { type: 'Lit', value: c } }, row, db, ast, groupRows)) return evalExpr(w.then, row, db, ast, groupRows);
+            }
+          }
+          return e.else === null ? null : evalExpr(e.else, row, db, ast, groupRows);
+        }
         case 'Agg': {
           const rows = groupRows || (row && row.__group) || [];
           return aggregate(e, rows, row, db, ast);
@@ -1571,6 +1668,124 @@ FROM customers;
     }
     function isStar(c) { return c.type === 'Star'; }
 
+    // === Statements: UNION and INSERT / UPDATE / DELETE ===
+    const semantic = (msg) => { const e = new Error(msg); e.semantic = true; return e; };
+    const sortVal = (a, b) => {
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      if (typeof a === 'number' && typeof b === 'number') return a - b;
+      return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+    };
+    function runStatement(ast, db) {
+      if (ast.type === 'Insert') return runInsert(ast, db);
+      if (ast.type === 'Update') return runUpdate(ast, db);
+      if (ast.type === 'Delete') return runDelete(ast, db);
+      if (ast.type === 'Union') return runUnion(ast, db);
+      checkGroupBy(ast);
+      return execute(ast, db);
+    }
+    function runUnion(ast, db) {
+      const results = ast.selects.map((s) => { checkGroupBy(s); return execute(s, db); });
+      const width = results[0].columns.length;
+      results.forEach((r, i) => {
+        if (r.columns.length !== width) throw semantic(`UNION: SELECT ${i + 1} returns ${r.columns.length} column(s), the first returns ${width}`);
+      });
+      let rows = results[0].rows.slice();
+      ast.all.forEach((keepAll, i) => {
+        rows = rows.concat(results[i + 1].rows);
+        if (!keepAll) { const seen = new Set(); rows = rows.filter((r) => { const k = JSON.stringify(r); if (seen.has(k)) return false; seen.add(k); return true; }); }
+      });
+      const columns = results[0].columns;
+      if (ast.orderBy) {
+        const keys = ast.orderBy.map((o) => {
+          let idx = -1;
+          if (o.expr.type === 'ColRef' && !o.expr.table) idx = columns.findIndex((c) => c.toLowerCase() === o.expr.name.toLowerCase());
+          else if (o.expr.type === 'Lit' && Number.isInteger(o.expr.value) && o.expr.value >= 1 && o.expr.value <= width) idx = o.expr.value - 1;
+          if (idx < 0) throw semantic(`ORDER BY after UNION must name an output column (${columns.join(', ')}) or its position`);
+          return { idx, dir: o.dir };
+        });
+        rows.sort((a, b) => { for (const k of keys) { const c = sortVal(a[k.idx], b[k.idx]); if (c) return k.dir === 'desc' ? -c : c; } return 0; });
+      }
+      if (ast.offset) rows = rows.slice(ast.offset);
+      if (ast.limit !== null && ast.limit !== undefined) rows = rows.slice(0, ast.limit);
+      return { columns, rows };
+    }
+    function tableFor(name, db) {
+      const key = Object.keys(db).find((k) => k.toLowerCase() === name.toLowerCase());
+      if (!key) throw semantic(`unknown table '${name}' — tables are: ${Object.keys(db).join(', ')}`);
+      return { key, t: db[key] };
+    }
+    function colIndex(t, key, name) {
+      const i = t.columns.findIndex((c) => c.toLowerCase() === name.toLowerCase());
+      if (i < 0) throw semantic(`table '${key}' has no column '${name}' (columns: ${t.columns.join(', ')})`);
+      return i;
+    }
+    // A value must fit the column's type; nothing is written unless every row fits.
+    function fit(t, key, i, v) {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'boolean') v = v ? 1 : 0;
+      if (t.rows.every((r) => r[i] === null)) t.types[i] = typeof v === 'string' ? 'str' : Number.isInteger(v) ? 'int' : 'float';
+      const kind = t.types[i];
+      if (kind === 'int' && typeof v === 'number' && Number.isInteger(v)) return v;
+      if (kind === 'float' && typeof v === 'number') return v;
+      if (kind === 'str' && typeof v === 'string') return v;
+      const what = { int: 'whole numbers', float: 'numbers', str: 'text' }[kind];
+      throw semantic(`column ${key}.${t.columns[i]} holds ${what}; ${typeof v === 'string' ? `'${v}'` : v} does not fit${kind === 'str' ? ' — put it in quotes to store it as text' : ''}`);
+    }
+    function rowCtx(t, key, r) {
+      const ctx = {};
+      t.columns.forEach((c, i) => { ctx[c] = r[i]; ctx[`${key}.${c}`] = r[i]; });
+      return ctx;
+    }
+    function noAgg(e, where) { if (e && containsAgg(e)) throw semantic(`${where} cannot use an aggregate`); }
+    function runInsert(ast, db) {
+      const { key, t } = tableFor(ast.table, db);
+      const idx = ast.columns ? ast.columns.map((c) => colIndex(t, key, c)) : t.columns.map((_, i) => i);
+      if (new Set(idx).size !== idx.length) throw semantic('INSERT names the same column twice');
+      let values;
+      if (ast.select) {
+        const r = runStatement(ast.select, db);
+        if (r.columns.length !== idx.length) throw semantic(`INSERT expects ${idx.length} value(s) per row; the SELECT returns ${r.columns.length}`);
+        values = r.rows;
+      } else {
+        values = ast.rows.map((row, n) => {
+          if (row.length !== idx.length) throw semantic(`VALUES row ${n + 1} has ${row.length} value(s); expected ${idx.length}`);
+          row.forEach((e) => noAgg(e, 'VALUES'));
+          return row.map((e) => evalExpr(e, {}, db, ast, null));
+        });
+      }
+      const fresh = values.map((vals) => {
+        const r = t.columns.map(() => null);
+        vals.forEach((v, j) => { r[idx[j]] = fit(t, key, idx[j], v); });
+        return r;
+      });
+      t.rows.push(...fresh);
+      return { columns: ['inserted'], rows: [[fresh.length]], wrote: key };
+    }
+    function matching(t, key, where) {
+      noAgg(where, 'WHERE');
+      return t.rows.filter((r) => !where || evalExpr(where, rowCtx(t, key, r), DB, {}, null) === true);
+    }
+    function runUpdate(ast, db) {
+      const { key, t } = tableFor(ast.table, db);
+      const sets = ast.set.map((a) => { noAgg(a.expr, 'SET'); return { i: colIndex(t, key, a.column), expr: a.expr }; });
+      if (new Set(sets.map((x) => x.i)).size !== sets.length) throw semantic('UPDATE sets the same column twice');
+      // every SET sees the row as it was before this statement
+      const changes = matching(t, key, ast.where).map((r) => {
+        const ctx = rowCtx(t, key, r);
+        return [r, sets.map((x) => [x.i, fit(t, key, x.i, evalExpr(x.expr, ctx, db, ast, null))])];
+      });
+      for (const [r, vals] of changes) for (const [i, v] of vals) r[i] = v;
+      return { columns: ['updated'], rows: [[changes.length]], wrote: key };
+    }
+    function runDelete(ast, db) {
+      const { key, t } = tableFor(ast.table, db);
+      const doomed = new Set(matching(t, key, ast.where));
+      t.rows = t.rows.filter((r) => !doomed.has(r));
+      return { columns: ['deleted'], rows: [[doomed.size]], wrote: key };
+    }
+
     // === UI ===
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -1598,9 +1813,31 @@ ORDER BY n DESC`,
       like: `SELECT name, city FROM customers WHERE city LIKE 'L%' ORDER BY name`,
       err: `SELECT name, city FROM customers WHERE city = 'Lahore' ORDER BY`,
       sem: `SELECT city, name, COUNT(*) FROM customers GROUP BY city`,
+      case: `SELECT name, price,
+  CASE WHEN price >= 50000 THEN 'premium'
+       WHEN price >= 10000 THEN 'mid'
+       ELSE 'budget' END AS tier
+FROM products
+ORDER BY price DESC`,
+      union: `SELECT name, 'customer' AS kind FROM customers WHERE city = 'Lahore'
+UNION ALL
+SELECT name, 'product' FROM products WHERE category = 'Desk'
+ORDER BY kind, name`,
+      insert: `INSERT INTO products (id, name, category, price, stock)
+VALUES (99, 'Webcam 4K', 'Video', 18500, 12)`,
+      update: `UPDATE products SET price = price + 500, stock = stock - 1
+WHERE category = 'Desk'`,
+      delete: `DELETE FROM products WHERE stock < 20`,
     };
 
     let currentSchemaTable = 'products';
+    const DB_ORIGINAL = JSON.parse(JSON.stringify(DB));
+    // After a write: new row counts on the tabs, the changed table shown, and a way back.
+    function refreshData(table) {
+      document.querySelectorAll('.schema-tabs button[data-t]').forEach((b) => { b.textContent = `${b.dataset.t} (${DB[b.dataset.t].rows.length})`; });
+      renderSchema(table);
+      $('dataNote').textContent = `${table} changed in this page only. Reset data to start over.`;
+    }
 
     function renderSchema(table) {
       currentSchemaTable = table;
@@ -1628,8 +1865,8 @@ ORDER BY n DESC`,
       try {
         const tokens = tokenize(sql);
         const ast = parse(tokens, sql);
-        checkGroupBy(ast);
-        const result = execute(ast, DB);
+        const result = runStatement(ast, DB);
+        if (result.wrote) refreshData(result.wrote);
         $('ast').hidden = false;
         $('ast').textContent = JSON.stringify(ast, (k, v) => k.startsWith('start') || k.startsWith('end') ? undefined : v, 2).slice(0, 2000);
         if (!result.rows.length && result.columns.length) {
@@ -1698,8 +1935,8 @@ ${esc(sql)}
         const sql = btn.dataset.err;
         try {
           const ast = parse(tokenize(sql), sql);
-          checkGroupBy(ast);
-          execute(ast, DB);
+          if (ast.type !== 'Select' && ast.type !== 'Union') throw semantic('only queries are checked here');
+          runStatement(ast, DB);
           $('errOut').innerHTML = `<span class="err-highlight">${esc(sql)}<span class="err-msg">no error</span></span>`;
         } catch (e) {
           const off = Math.min(e.offset ?? 0, Math.max(sql.length - 1, 0));
@@ -1713,7 +1950,14 @@ ${esc(sql)}
     $('sql').addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
     });
-    $('fmt').addEventListener('change', run);
+    // Re-running on a format change must not repeat an INSERT/UPDATE/DELETE.
+    $('fmt').addEventListener('change', () => { if (!/^\s*(insert|update|delete)\b/i.test($('sql').value)) run(); });
+    $('resetData').addEventListener('click', () => {
+      for (const k of Object.keys(DB_ORIGINAL)) DB[k] = JSON.parse(JSON.stringify(DB_ORIGINAL[k]));
+      refreshData(currentSchemaTable);
+      $('sql').value = PRESETS.products; run();
+      $('dataNote').textContent = 'Data reset to the original sample tables.';
+    });
 
     renderSchema('products');
     run();
