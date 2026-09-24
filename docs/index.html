@@ -1742,6 +1742,246 @@ function bindCopy(root=document){
 
   bindCopy();
   </script>
+  <script>
+  // Sections 7-11: schema diagram, EXPLAIN tree, query builder, NULL logic, JOIN visualizer.
+  // Reuses the engine above (DB, tokenize, parse, execute, and3/or3/not3, run, renderSchema).
+  (function () {
+    // ---------- 7. Schema diagram ----------
+    const FKS = [
+      ['orders', 'customer_id', 'customers', 'id'],
+      ['order_items', 'order_id', 'orders', 'id'],
+      ['order_items', 'product_id', 'products', 'id'],
+    ];
+    const POS = { customers: [10, 10], orders: [250, 10], products: [10, 180], order_items: [250, 180] }; // 2x2 grid fits phones too
+    const BOX_W = 200, HEAD = 26, ROW = 18;
+    const colY = (t, c) => POS[t][1] + HEAD + ROW * DB[t].columns.indexOf(c) + ROW / 2 + 4;
+    function drawSchema(active) {
+      const svg = $('schemaSvg');
+      let out = '<style>.erd-t{cursor:pointer;transition:opacity .25s}.erd-t rect.b{fill:var(--surface);stroke:var(--border-strong)}' +
+        '.erd-t.on rect.b{stroke:var(--accent);stroke-width:2}.erd-t rect.h{fill:var(--surface-2)}.erd-t.on rect.h{fill:var(--accent-soft)}' +
+        '.erd-t text{fill:var(--text);font:12px var(--mono,monospace)}.erd-t text.n{font-weight:700;font-size:13px}.erd-t text.ty{fill:var(--muted)}' +
+        '.erd-fk{stroke:var(--muted);stroke-width:1.5;fill:none}.erd-fk.on{stroke:var(--accent);stroke-width:2.5}' +
+        '.erd-dim .erd-t:not(.on){opacity:.45}</style>';
+      for (const [t, c, rt, rc] of FKS) {
+        const on = active && (active === t || active === rt) ? ' on' : '';
+        let d;
+        if (POS[rt][0] + BOX_W <= POS[t][0]) {            // target is to the left: curve between the two columns
+          const x1 = POS[t][0], y1 = colY(t, c), x2 = POS[rt][0] + BOX_W, y2 = colY(rt, rc);
+          d = `M${x1},${y1} C${x1 - 30},${y1} ${x2 + 30},${y2} ${x2},${y2}`;
+        } else {                                          // same column: straight line between the boxes
+          const x = POS[t][0] + BOX_W / 2, hOf = n => HEAD + ROW * DB[n].columns.length + 8;
+          d = POS[rt][1] > POS[t][1]
+            ? `M${x},${POS[t][1] + hOf(t)} L${x},${POS[rt][1]}`
+            : `M${x},${POS[t][1]} L${x},${POS[rt][1] + hOf(rt)}`;
+        }
+        out += `<path class="erd-fk${on}" d="${d}"><title>${t}.${c} → ${rt}.${rc}</title></path>`;
+      }
+      for (const [t, [x, y]] of Object.entries(POS)) {
+        const tb = DB[t], h = HEAD + ROW * tb.columns.length + 8;
+        out += `<g class="erd-t${active === t ? ' on' : ''}" data-t="${t}" tabindex="0" role="button" aria-label="${t} table, ${tb.rows.length} rows">` +
+          `<rect class="b" x="${x}" y="${y}" width="${BOX_W}" height="${h}" rx="8"/>` +
+          `<rect class="h" x="${x + 1}" y="${y + 1}" width="${BOX_W - 2}" height="${HEAD - 2}" rx="7"/>` +
+          `<text class="n" x="${x + 10}" y="${y + 18}">${t}</text><text class="ty" x="${x + BOX_W - 10}" y="${y + 18}" text-anchor="end">${tb.rows.length} rows</text>`;
+        tb.columns.forEach((c, i) => {
+          const nullable = tb.rows.some(r => r[i] === null) ? '*' : '';
+          const key = c === 'id' ? 'PK ' : FKS.some(f => f[0] === t && f[1] === c) ? 'FK ' : '';
+          const cy = y + HEAD + ROW * i + ROW / 2 + 8;
+          out += `<text x="${x + 10}" y="${cy}">${key}${c}${nullable}</text><text class="ty" x="${x + BOX_W - 10}" y="${cy}" text-anchor="end">${tb.types[i]}</text>`;
+        });
+        out += '</g>';
+      }
+      svg.setAttribute('viewBox', '0 0 460 312');
+      svg.style.minWidth = '0'; svg.style.maxWidth = '640px'; svg.style.margin = '0 auto';
+      svg.innerHTML = out;
+      svg.classList.toggle('erd-dim', !!active);
+      svg.querySelectorAll('.erd-t').forEach(g => {
+        g.addEventListener('mouseenter', () => highlight(g.dataset.t));
+        g.addEventListener('mouseleave', () => highlight(null));
+        const pick = () => { selectTable(g.dataset.t); document.getElementById('dataHead').closest('section').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+        g.addEventListener('click', pick);
+        g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      });
+    }
+    function highlight(t) {
+      const svg = $('schemaSvg');
+      svg.classList.toggle('erd-dim', !!t);
+      svg.querySelectorAll('.erd-t').forEach(g => g.classList.toggle('on', g.dataset.t === t));
+      svg.querySelectorAll('.erd-fk').forEach((p, i) => p.classList.toggle('on', !!t && (FKS[i][0] === t || FKS[i][2] === t)));
+    }
+    function selectTable(t) {
+      renderSchema(t);
+      $('dsTabs').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.t === t));
+      highlight(t);
+    }
+    $('dsTabs').innerHTML = Object.keys(DB).map(t => `<button type="button" data-t="${t}">${t}</button>`).join('');
+    $('dsTabs').querySelectorAll('button').forEach(b => b.addEventListener('click', () => selectTable(b.dataset.t)));
+    drawSchema(null);
+
+    // ---------- 8. EXPLAIN parse tree ----------
+    const SKIP = k => k === 'offset' || k.startsWith('start') || k.startsWith('end');
+    function label(n) {
+      const bits = [];
+      for (const [k, v] of Object.entries(n)) {
+        if (k === 'type' || SKIP(k) || v === null || v === undefined || typeof v === 'object') continue;
+        if (v === false) continue;
+        bits.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+      }
+      return bits.join(' · ');
+    }
+    function node(n, name, root) {
+      if (n === null || typeof n !== 'object') return `<div class="pt-branch"><div class="pt-node"><span class="pt-sub">${esc(name)}</span> ${esc(JSON.stringify(n))}</div></div>`;
+      if (Array.isArray(n)) return n.map((x, i) => node(x, `${name}[${i}]`)).join('');
+      const kids = Object.entries(n).filter(([k, v]) => !SKIP(k) && v && typeof v === 'object' && (!Array.isArray(v) || v.length));
+      const sub = label(n);
+      const head = `<div class="pt-node${root ? ' root' : ''}">${name && !root ? `<span class="pt-sub">${esc(name)}</span> ` : ''}<b>${esc(n.type || 'node')}</b>${sub ? `<div class="pt-sub">${esc(sub)}</div>` : ''}</div>`;
+      const inner = kids.length ? `<div class="pt-children">${kids.map(([k, v]) => node(v, k)).join('')}</div>` : '';
+      return root ? head + inner : `<div class="pt-branch">${head}${inner}</div>`;
+    }
+    function explain() {
+      const sql = $('sql').value;
+      $('explainErr').textContent = '';
+      try {
+        const ast = parse(tokenize(sql), sql);
+        $('parseTree').innerHTML = node(ast, '', true);
+      } catch (e) {
+        $('parseTree').innerHTML = '';
+        $('explainErr').textContent = `Cannot build a tree: ${e.message}`;
+      }
+    }
+    $('explainBtn').addEventListener('click', explain);
+    $('runBtn').addEventListener('click', explain);
+    document.querySelectorAll('.presets button[data-q]').forEach(b => b.addEventListener('click', explain));
+    explain();
+
+    // ---------- 9. Query builder ----------
+    const qb = id => $(id);
+    function fillCols() {
+      const t = DB[qb('qbTable').value];
+      qb('qbCols').innerHTML = t.columns.map(c => `<option>${c}</option>`).join('');
+      qb('qbWhereCol').innerHTML = '<option value="">(no filter)</option>' + t.columns.map(c => `<option>${c}</option>`).join('');
+      qb('qbOrder').innerHTML = '<option value="">(none)</option>' + t.columns.flatMap(c => [`<option value="${c} ASC">${c} ↑</option>`, `<option value="${c} DESC">${c} ↓</option>`]).join('');
+      buildSql();
+    }
+    function sqlLiteral(table, col, raw) {
+      const t = DB[table], type = t.types[t.columns.indexOf(col)];
+      if (type === 'int' && /^-?\d+(\.\d+)?$/.test(raw.trim())) return raw.trim();
+      return `'${raw.replace(/'/g, "''")}'`;
+    }
+    function buildSql() {
+      const table = qb('qbTable').value;
+      const cols = [...qb('qbCols').selectedOptions].map(o => o.value);
+      let sql = `SELECT ${cols.length ? cols.join(', ') : '*'} FROM ${table}`;
+      const wc = qb('qbWhereCol').value, op = qb('qbOp').value, val = qb('qbVal').value;
+      if (wc && op === 'IS NULL') sql += ` WHERE ${wc} IS NULL`;
+      else if (wc && op && val.trim() !== '') sql += ` WHERE ${wc} ${op} ${sqlLiteral(table, wc, val)}`;
+      if (qb('qbOrder').value) sql += ` ORDER BY ${qb('qbOrder').value}`;
+      const lim = parseInt(qb('qbLimit').value, 10);
+      if (lim > 0) sql += ` LIMIT ${Math.min(lim, 100)}`;
+      qb('qbSql').dataset.sql = sql;
+      qb('qbSql').innerHTML = esc(sql)
+        .replace(/(&#39;(?:[^&]|&(?!#39;))*&#39;)/g, '<span class="str">$1</span>')
+        .replace(/\b(SELECT|FROM|WHERE|ORDER BY|LIMIT|IS NULL|LIKE|ASC|DESC)\b/g, '<span class="kw">$1</span>')
+        .replace(/(^|[\s(,=<>])(-?\d+(?:\.\d+)?)(?=$|[\s),])/g, '$1<span class="num">$2</span>');
+    }
+    qb('qbTable').innerHTML = Object.keys(DB).map(t => `<option>${t}</option>`).join('');
+    qb('qbTable').value = 'customers';
+    qb('qbTable').addEventListener('change', fillCols);
+    ['qbCols', 'qbWhereCol', 'qbOp', 'qbOrder'].forEach(id => qb(id).addEventListener('change', buildSql));
+    ['qbVal', 'qbLimit'].forEach(id => qb(id).addEventListener('input', buildSql));
+    qb('qbRun').addEventListener('click', () => {
+      $('sql').value = qb('qbSql').dataset.sql; run(); explain();
+      $('sql').closest('section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    qb('qbCopy').addEventListener('click', async () => {
+      const btn = qb('qbCopy');
+      try { await navigator.clipboard.writeText(qb('qbSql').dataset.sql); btn.textContent = 'Copied'; }
+      catch { btn.textContent = 'Copy failed'; }
+      setTimeout(() => { btn.textContent = 'Copy SQL'; }, 1200);
+    });
+    fillCols();
+    qb('qbWhereCol').value = 'city'; qb('qbOp').value = '='; qb('qbVal').value = 'Lahore'; qb('qbOrder').value = 'score DESC';
+    buildSql();
+
+    // ---------- 10. NULL logic playground ----------
+    const truth = { A: null, B: false, op: 'AND' };
+    const show = v => v === null ? 'NULL' : v ? 'TRUE' : 'FALSE';
+    const cls = v => v === null ? 'u' : v ? 't' : 'f';
+    function renderTruth() {
+      const r = truth.op === 'AND' ? and3(truth.A, truth.B) : truth.op === 'OR' ? or3(truth.A, truth.B) : not3(truth.A);
+      const expr = truth.op === 'NOT' ? `NOT ${show(truth.A)}` : `${show(truth.A)} ${truth.op} ${show(truth.B)}`;
+      const why = r === null
+        ? 'The answer depends on the unknown value, so SQL returns NULL. A WHERE clause treats NULL like FALSE and drops the row.'
+        : truth.op !== 'NOT' && (truth.A === null || truth.B === null)
+          ? `The known side already decides it, so the unknown value does not matter.`
+          : 'Ordinary two-valued logic.';
+      $('truthResult').innerHTML = `<div class="sql-out"><span class="kw">${esc(expr)}</span> → <b class="${cls(r)}">${show(r)}</b></div><div class="muted" style="font-size:13px;margin-top:6px">${esc(why)}</div>`;
+      document.querySelectorAll('.truth-pick [data-truth="B"]').forEach(b => { b.disabled = truth.op === 'NOT'; });
+      // highlight the matching cell in the tables below
+      document.querySelectorAll('.truth-table td').forEach(td => td.style.outline = '');
+      const tables = [...document.querySelectorAll('.truth-table')];
+      const idx = v => v === true ? 1 : v === false ? 2 : 3;
+      const t = tables[truth.op === 'AND' ? 0 : truth.op === 'OR' ? 1 : 2];
+      if (t) {
+        const row = truth.op === 'NOT' ? t.tBodies[0].rows[0] : t.tBodies[0].rows[idx(truth.A) - 1];
+        const cell = row && row.cells[truth.op === 'NOT' ? idx(truth.A) : idx(truth.B)];
+        if (cell) cell.style.outline = '2px solid var(--accent)';
+      }
+    }
+    document.querySelectorAll('.truth-pick button').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.truth) {
+        truth[b.dataset.truth] = b.dataset.v === 'null' ? null : b.dataset.v === 'true';
+        document.querySelectorAll(`.truth-pick [data-truth="${b.dataset.truth}"]`).forEach(x => x.classList.toggle('on', x === b));
+      } else {
+        truth.op = b.dataset.op;
+        document.querySelectorAll('.truth-pick [data-op]').forEach(x => x.classList.toggle('on', x === b));
+      }
+      renderTruth();
+    }));
+    renderTruth();
+
+    // ---------- 11. JOIN visualizer ----------
+    function renderJoin() {
+      const kind = $('joinKind').value, city = $('joinFilter').value;
+      const C = DB.customers, O = DB.orders;
+      const ci = n => C.columns.indexOf(n), oi = n => O.columns.indexOf(n);
+      const pool = C.rows.filter(r => !city || r[ci('city')] === city);
+      const hasOrder = r => O.rows.some(o => o[oi('customer_id')] === r[ci('id')]);
+      // Always keep customers without orders in view: they are what makes LEFT differ from INNER.
+      const lonely = pool.filter(r => !hasOrder(r)).slice(0, 2);
+      const left = [...pool.filter(hasOrder).slice(0, 8 - lonely.length), ...lonely].sort((a, b) => a[ci('id')] - b[ci('id')]);
+      const leftIds = new Set(left.map(r => r[ci('id')]));
+      const right = O.rows.filter(r => leftIds.has(r[oi('customer_id')])).slice(0, 12);
+      const out = [];
+      const matched = new Set();
+      for (const l of left) {
+        const ms = O.rows.filter(o => o[oi('customer_id')] === l[ci('id')]);
+        if (ms.length) ms.forEach(o => { out.push([l, o]); matched.add(l[ci('id')]); });
+        else if (kind === 'left') out.push([l, null]);
+      }
+      const pill = v => v === null ? '<span class="pill null">NULL</span>' : esc(String(v));
+      const mini = (cols, rows, key, keyCol, hit) => `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${
+        rows.map(r => `<tr style="${hit(r) ? 'background:var(--accent-soft)' : 'opacity:.55'}">${cols.map(c => `<td>${pill(r[key(c)])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      $('joinLeft').innerHTML = mini(['id', 'name', 'city'], left, ci, 'id', r => matched.has(r[ci('id')]));
+      $('joinRight').innerHTML = mini(['id', 'customer_id', 'status'], right, oi, 'customer_id', () => true);
+      $('joinOp').textContent = `${kind === 'left' ? 'LEFT JOIN' : 'INNER JOIN'} ON c.id = o.customer_id`;
+      $('joinOut').innerHTML = `<div class="table-wrap"><table><thead><tr><th>c.name</th><th>c.city</th><th>o.id</th><th>o.status</th></tr></thead><tbody>${
+        out.map(([l, o]) => `<tr><td>${pill(l[ci('name')])}</td><td>${pill(l[ci('city')])}</td><td>${pill(o ? o[oi('id')] : null)}</td><td>${pill(o ? o[oi('status')] : null)}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="muted">No rows.</td></tr>'}</tbody></table></div>`;
+      const unmatched = left.length - matched.size;
+      $('joinNote').textContent = `${left.length} customer(s) on the left, ${out.length} result row(s). ` +
+        (unmatched ? (kind === 'left' ? `${unmatched} customer(s) with no orders are kept with NULLs (LEFT JOIN).` : `${unmatched} customer(s) with no orders are dropped (INNER JOIN).`) : 'Every customer shown has at least one order.');
+      // cross-check against the real engine
+      try {
+        const sql = `SELECT c.name, o.id FROM customers c ${kind === 'left' ? 'LEFT JOIN' : 'JOIN'} orders o ON c.id = o.customer_id` + (city ? ` WHERE c.city = '${city}'` : '');
+        const res = execute(parse(tokenize(sql), sql), DB);
+        if (left.length === pool.length) $('joinNote').textContent += ` Engine check: the same query in the playground also returns ${res.rows.length} row(s).`;
+      } catch (e) { /* the visual still stands on its own */ }
+    }
+    $('joinKind').addEventListener('change', renderJoin);
+    $('joinFilter').addEventListener('change', renderJoin);
+    renderJoin();
+  })();
+  </script>
 
   </main>
   </body>
