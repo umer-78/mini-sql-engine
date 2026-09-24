@@ -6,6 +6,11 @@
   <meta name="theme-color" content="#2563eb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)">
   <title>minisql — SQL Playground Demo</title>
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="minisql — SQL Playground Demo">
+  <meta property="og:description" content="Interactive SQL playground: tokenizer, recursive-descent parser and executor over embedded CSV data — joins, aggregates, NULL logic.">
+  <meta property="og:url" content="https://umer-78.github.io/mini-sql-engine/">
+  <meta name="twitter:card" content="summary">
   <meta name="description" content="Interactive SQL playground: tokenizer, recursive-descent parser and executor over embedded CSV data — joins, aggregates, NULL logic.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='21' font-size='14' text-anchor='middle' fill='white' font-family='monospace'>SQL</text></svg>">
   <style>
@@ -515,7 +520,7 @@ footer a:hover { color: var(--accent); }
         </label>
       </div>
       <div id="out" style="margin-top:12px" aria-live="polite"></div>
-      <div id="ast" class="result-box" hidden></div>
+      <div id="ast" class="result-box" hidden aria-live="polite"></div>
     </section>
 
     <section class="card">
