@@ -368,6 +368,101 @@ footer a:hover { color: var(--accent); }
 .finding .caret { color: var(--bad); font-weight: 700; }
 .finding .detail { white-space: pre-wrap; }
 #ast { max-height: 320px; overflow: auto; }
+/* === advanced features === */
+.schema-diagram { overflow-x: auto; padding: 8px 0; }
+.schema-diagram svg { display: block; min-width: 560px; }
+.schema-box { animation: fadeUp 0.5s var(--ease) both; transition: transform 0.25s var(--ease), filter 0.25s var(--ease); cursor: pointer; }
+.schema-box:hover { transform: translateY(-3px); filter: drop-shadow(0 6px 14px var(--accent-glow)); }
+.schema-box rect.head { transition: fill 0.25s var(--ease); }
+.schema-fk { stroke-dasharray: 6 4; animation: fkDash 1.2s linear infinite; }
+@keyframes fkDash { to { stroke-dashoffset: -20; } }
+.parse-tree { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 14px 8px; overflow-x: auto; }
+.pt-node {
+  background: var(--surface); border: 1.5px solid var(--border-strong); border-radius: 10px;
+  padding: 6px 12px; font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+  animation: scaleIn 0.3s var(--ease-bounce) both; position: relative; white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+}
+.pt-node.root { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-size: 13.5px; }
+.pt-node .pt-sub { color: var(--muted); font-weight: 400; font-size: 11px; display: block; text-align: center; }
+.pt-children { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 18px; position: relative; padding-top: 14px; }
+.pt-children::before {
+  content: ""; position: absolute; top: 0; left: 50%; width: 2px; height: 14px;
+  background: var(--border-strong);
+}
+.pt-branch { display: flex; flex-direction: column; align-items: center; position: relative; padding-top: 14px; }
+.pt-branch::before {
+  content: ""; position: absolute; top: 0; left: 50%; width: 2px; height: 14px;
+  background: var(--border-strong); transform: translateX(-50%);
+}
+.pt-children .pt-branch:first-child::after,
+.pt-children .pt-branch:last-child::after {
+  content: ""; position: absolute; top: 0; height: 2px; background: var(--border-strong);
+}
+.qb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.sql-out {
+  font-family: var(--mono); font-size: 14px; line-height: 1.7; padding: 14px 16px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  margin-top: 12px; color: var(--text); position: relative; white-space: pre-wrap;
+}
+.sql-out .kw { color: var(--accent); font-weight: 700; }
+.sql-out .str { color: var(--good); }
+.sql-out .num { color: var(--warn); }
+.join-stage { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: start; margin-top: 12px; }
+.join-col h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.join-op {
+  align-self: center; font-family: var(--mono); font-size: 12px; font-weight: 700;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  padding: 8px 12px; border-radius: 99px; text-align: center; white-space: nowrap;
+  animation: pulse 2s ease-in-out infinite;
+}
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-family: var(--mono); }
+.mini-table th, .mini-table td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; }
+.mini-table th { background: var(--surface-2); font-size: 11px; color: var(--muted); }
+.mini-table tr.match td { background: var(--good-soft); }
+.mini-table tr.nomatch td { opacity: 0.4; }
+.mini-table td.null { color: var(--bad); font-style: italic; }
+.null-cell { cursor: pointer; transition: all 0.2s var(--ease); }
+.null-cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.truth-table { border-collapse: separate; border-spacing: 4px; font-size: 14px; margin-top: 10px; }
+.truth-table th, .truth-table td {
+  padding: 9px 14px; text-align: center; border-radius: 8px; border: 1px solid var(--border);
+  font-family: var(--mono); font-weight: 700; min-width: 58px;
+}
+.truth-table th { background: var(--surface-2); color: var(--muted); font-size: 12px; }
+.truth-table td.t { background: var(--good-soft); color: var(--good); }
+.truth-table td.f { background: var(--bad-soft); color: var(--bad); }
+.truth-table td.u { background: var(--warn-soft); color: var(--warn); }
+.truth-pick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.truth-pick button { font-size: 13px; padding: 6px 14px; border-radius: 99px; }
+.truth-pick button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.err-highlight {
+  display: block; font-family: var(--mono); font-size: 13.5px; line-height: 1.7;
+  padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius); white-space: pre-wrap; word-break: break-word; margin-top: 8px;
+}
+.err-highlight .err-ch {
+  background: var(--bad); color: #fff; border-radius: 3px; padding: 1px 2px;
+  font-weight: 700; animation: hlPop 0.4s var(--ease);
+}
+.err-highlight .err-msg { display: block; color: var(--bad); font-weight: 600; margin-top: 8px; font-family: var(--font); }
+@keyframes hlPop { 0% { transform: scale(1.6); } 100% { transform: scale(1); } }
+.ds-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.ds-tabs button { font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 99px; }
+.ds-tabs button.active {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 80%, #7c3aed));
+  color: #fff; border-color: transparent; box-shadow: 0 2px 8px var(--accent-glow);
+}
+.result-anim tbody tr { animation: fadeUp 0.35s var(--ease) both; }
+.result-anim tbody tr:nth-child(1) { animation-delay: 0.02s; }
+.result-anim tbody tr:nth-child(2) { animation-delay: 0.05s; }
+.result-anim tbody tr:nth-child(3) { animation-delay: 0.08s; }
+.result-anim tbody tr:nth-child(4) { animation-delay: 0.11s; }
+.result-anim tbody tr:nth-child(5) { animation-delay: 0.14s; }
+.result-anim tbody tr:nth-child(6) { animation-delay: 0.17s; }
+.result-anim tbody tr:nth-child(7) { animation-delay: 0.2s; }
+.result-anim tbody tr:nth-child(8) { animation-delay: 0.23s; }
+@media (max-width: 560px) { .join-stage { grid-template-columns: 1fr; } .join-op { justify-self: center; } }
   </style>
 </head>
 <body>
@@ -455,6 +550,131 @@ FROM customers;
       <p><code>SELECT [DISTINCT]</code>, expressions with <code>+ - * / %</code>, aliases, <code>INNER|LEFT JOIN … ON</code>, <code>WHERE</code> with <code>AND/OR/NOT</code>, comparisons, <code>IS [NOT] NULL</code>, <code>[NOT] IN</code>, <code>[NOT] LIKE 'a%_'</code>, <code>GROUP BY</code> + <code>HAVING</code>, aggregates (<code>COUNT SUM AVG MIN MAX</code> incl. <code>DISTINCT</code>), <code>ORDER BY</code>, <code>LIMIT/OFFSET</code>.</p>
       <p class="muted" style="margin-bottom:0"><b>Not supported:</b> INSERT/UPDATE/DELETE, subqueries, UNION, window functions, CASE, RIGHT/FULL JOIN. Joins are nested-loop — suited to files that fit in memory.</p>
     </section>
+
+    <section class="card">
+      <h2><span class="section-num">7</span> Schema diagram</h2>
+      <p class="muted" style="margin-top:0">All tables with columns, types and foreign keys — animated on load. Hover a table to highlight it; click to jump to its data preview.</p>
+      <div class="ds-tabs" id="dsTabs"></div>
+      <div class="schema-diagram"><svg id="schemaSvg" viewBox="0 0 720 360" role="img" aria-label="Entity relationship diagram of the sample database"></svg></div>
+      <div class="legend muted" style="font-size:13px;display:flex;gap:16px;flex-wrap:wrap">
+        <span>━━ foreign key</span><span>PK = primary key</span><span> nullable columns marked *</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span class="section-num">8</span> EXPLAIN — parse tree</h2>
+      <p class="muted" style="margin-top:0">The recursive-descent parser's AST rendered as a tree, rebuilt live from the query above. Press Run or edit the query and click Explain.</p>
+      <button class="primary" id="explainBtn">Explain current query</button>
+      <div id="parseTree" class="parse-tree" aria-live="polite"></div>
+      <div id="explainErr" class="error"></div>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <h2><span class="section-num">9</span> Query builder</h2>
+        <p class="muted" style="margin-top:0">Dropdowns → generated SQL. Edit the result freely — it lands in the playground above.</p>
+        <div class="qb-grid">
+          <div><label for="qbTable">Table</label><select id="qbTable"></select></div>
+          <div><label for="qbCols">Columns</label><select id="qbCols" multiple size="4"></select></div>
+          <div><label for="qbWhereCol">WHERE column</label><select id="qbWhereCol"></select></div>
+          <div><label for="qbOp">Operator</label>
+            <select id="qbOp"><option value="">(none)</option><option>=</option><option>&lt;</option><option>&gt;</option><option>&lt;=</option><option>&gt;=</option><option>LIKE</option><option>IS NULL</option></select>
+          </div>
+          <div><label for="qbVal">Value</label><input id="qbVal" placeholder="e.g. Lahore" spellcheck="false"></div>
+          <div><label for="qbOrder">ORDER BY</label><select id="qbOrder"></select></div>
+          <div><label for="qbLimit">LIMIT</label><input id="qbLimit" type="number" min="1" max="100" value="10"></div>
+        </div>
+        <div class="sql-out" id="qbSql"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" id="qbRun">Run in playground</button>
+          <button id="qbCopy">Copy SQL</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2><span class="section-num">10</span> NULL logic playground</h2>
+        <p class="muted" style="margin-top:0">SQL is three-valued: <code>NULL</code> is unknown. Pick values for A and B, choose an operator, and see the result — then study the full truth tables.</p>
+        <div class="truth-pick">
+          <span class="muted" style="font-size:13px">A:</span>
+          <button data-truth="A" data-v="true">TRUE</button>
+          <button data-truth="A" data-v="false">FALSE</button>
+          <button data-truth="A" data-v="null" class="on">NULL</button>
+          <span class="muted" style="font-size:13px;margin-left:8px">B:</span>
+          <button data-truth="B" data-v="true">TRUE</button>
+          <button data-truth="B" data-v="false" class="on">FALSE</button>
+          <button data-truth="B" data-v="null">NULL</button>
+          <span class="muted" style="font-size:13px;margin-left:8px">op:</span>
+          <button data-op="AND" class="on">AND</button>
+          <button data-op="OR">OR</button>
+          <button data-op="NOT">NOT (A only)</button>
+        </div>
+        <div id="truthResult" style="margin-top:12px" aria-live="polite"></div>
+        <div class="table-wrap" style="margin-top:14px">
+          <table class="truth-table">
+            <thead><tr><th>AND</th><th>T</th><th>F</th><th>NULL</th></tr></thead>
+            <tbody>
+              <tr><th>T</th><td class="t">T</td><td class="f">F</td><td class="u">NULL</td></tr>
+              <tr><th>F</th><td class="f">F</td><td class="f">F</td><td class="f">F</td></tr>
+              <tr><th>NULL</th><td class="u">NULL</td><td class="f">F</td><td class="u">NULL</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="truth-table">
+            <thead><tr><th>OR</th><th>T</th><th>F</th><th>NULL</th></tr></thead>
+            <tbody>
+              <tr><th>T</th><td class="t">T</td><td class="t">T</td><td class="t">T</td></tr>
+              <tr><th>F</th><td class="t">T</td><td class="f">F</td><td class="u">NULL</td></tr>
+              <tr><th>NULL</th><td class="t">T</td><td class="u">NULL</td><td class="u">NULL</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table class="truth-table">
+            <thead><tr><th>NOT</th><th>T</th><th>F</th><th>NULL</th></tr></thead>
+            <tbody>
+              <tr><th>&nbsp;</th><td class="f">F</td><td class="t">T</td><td class="u">NULL</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h2><span class="section-num">11</span> JOIN visualizer</h2>
+        <p class="muted" style="margin-top:0">Nested-loop join on real rows: customers ⋈ orders on <code>customer_id = id</code>. Matched pairs glow; unmatched left rows keep NULLs under LEFT JOIN.</p>
+        <div class="row" style="margin-bottom:8px">
+          <div><label for="joinKind">Join type</label>
+            <select id="joinKind"><option value="inner">INNER JOIN</option><option value="left">LEFT JOIN</option></select>
+          </div>
+          <div><label for="joinFilter">Left rows (by city)</label>
+            <select id="joinFilter"><option value="">all</option><option>Lahore</option><option>Karachi</option><option>Islamabad</option></select>
+          </div>
+        </div>
+        <div class="join-stage">
+          <div class="join-col"><h4>customers (left)</h4><div id="joinLeft"></div></div>
+          <div class="join-op" id="joinOp">ON c.id = o.customer_id</div>
+          <div class="join-col"><h4>orders (right)</h4><div id="joinRight"></div></div>
+        </div>
+        <div style="margin-top:14px"><h4 style="margin:0 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">result</h4><div id="joinOut"></div></div>
+        <div class="muted" style="font-size:13px;margin-top:8px" id="joinNote"></div>
+      </section>
+
+      <section class="card">
+        <h2><span class="section-num">12</span> Error position highlighter</h2>
+        <p class="muted" style="margin-top:0">Break something on purpose — the exact offending character is highlighted inline with the parser's message.</p>
+        <div class="presets">
+          <button data-err="SELECT * FORM customers">bad keyword</button>
+          <button data-err="SELECT name, FROM customers">dangling comma</button>
+          <button data-err="SELECT 'unterminated FROM customers">unterminated string</button>
+          <button data-err="SELECT * FROM customers WHERE city = = 'Lahore'">double operator</button>
+          <button data-err="SELECT NoSuchCol FROM customers">unknown column</button>
+          <button data-err="SELECT COUNT(*) FROM missing_table">unknown table</button>
+        </div>
+        <div id="errOut" aria-live="polite"></div>
+      </section>
+    </div>
 
     <footer>113 tests · 94% coverage · Python 3.10–3.12 · Built by <a href="https://github.com/umer-78">Umer Hashmi</a></footer>
   </div>
