@@ -463,9 +463,22 @@ footer a:hover { color: var(--accent); }
 .result-anim tbody tr:nth-child(7) { animation-delay: 0.2s; }
 .result-anim tbody tr:nth-child(8) { animation-delay: 0.23s; }
 @media (max-width: 560px) { .join-stage { grid-template-columns: 1fr; } .join-op { justify-self: center; } }
-  </style>
+  
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <main id="main">
+
   <div class="wrap">
     <header class="top">
       <div class="brand">
@@ -484,19 +497,19 @@ footer a:hover { color: var(--accent); }
       <h2><span class="section-num">1</span> SQL playground</h2>
       <p class="muted" style="margin-top:0">Four CSV tables loaded. Write a query and press <b>Run</b> (or ⌘/Ctrl+Enter). Errors point at the character that caused them.</p>
       <div class="presets">
-        <button data-q="products">products</button>
-        <button data-q="revenue">revenue by category</button>
-        <button data-q="nulls">NULL counting</button>
-        <button data-q="join">left join orders</button>
-        <button data-q="having">group + having</button>
-        <button data-q="like">like pattern</button>
-        <button data-q="err">parse error</button>
-        <button data-q="sem">semantic error</button>
+        <button data-q="products" type="button">products</button>
+        <button data-q="revenue" type="button">revenue by category</button>
+        <button data-q="nulls" type="button">NULL counting</button>
+        <button data-q="join" type="button">left join orders</button>
+        <button data-q="having" type="button">group + having</button>
+        <button data-q="like" type="button">like pattern</button>
+        <button data-q="err" type="button">parse error</button>
+        <button data-q="sem" type="button">semantic error</button>
       </div>
       <label for="sql">Query</label>
       <textarea id="sql" rows="5" spellcheck="false">SELECT * FROM products LIMIT 5</textarea>
       <div class="row" style="margin-top:10px">
-        <button class="primary" id="runBtn">Run</button>
+        <button class="primary" id="runBtn" type="button">Run</button>
         <label style="margin:0;font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px">
           format <select id="fmt" style="width:auto;padding:6px 8px"><option value="table">table</option><option value="csv">csv</option></select>
         </label>
@@ -564,7 +577,7 @@ FROM customers;
     <section class="card">
       <h2><span class="section-num">8</span> EXPLAIN — parse tree</h2>
       <p class="muted" style="margin-top:0">The recursive-descent parser's AST rendered as a tree, rebuilt live from the query above. Press Run or edit the query and click Explain.</p>
-      <button class="primary" id="explainBtn">Explain current query</button>
+      <button class="primary" id="explainBtn" type="button">Explain current query</button>
       <div id="parseTree" class="parse-tree" aria-live="polite"></div>
       <div id="explainErr" class="error"></div>
     </section>
@@ -586,8 +599,8 @@ FROM customers;
         </div>
         <div class="sql-out" id="qbSql"></div>
         <div class="row" style="margin-top:10px">
-          <button class="primary" id="qbRun">Run in playground</button>
-          <button id="qbCopy">Copy SQL</button>
+          <button class="primary" id="qbRun" type="button">Run in playground</button>
+          <button id="qbCopy" type="button">Copy SQL</button>
         </div>
       </section>
 
@@ -596,17 +609,17 @@ FROM customers;
         <p class="muted" style="margin-top:0">SQL is three-valued: <code>NULL</code> is unknown. Pick values for A and B, choose an operator, and see the result — then study the full truth tables.</p>
         <div class="truth-pick">
           <span class="muted" style="font-size:13px">A:</span>
-          <button data-truth="A" data-v="true">TRUE</button>
-          <button data-truth="A" data-v="false">FALSE</button>
-          <button data-truth="A" data-v="null" class="on">NULL</button>
+          <button data-truth="A" data-v="true" type="button">TRUE</button>
+          <button data-truth="A" data-v="false" type="button">FALSE</button>
+          <button data-truth="A" data-v="null" class="on" type="button">NULL</button>
           <span class="muted" style="font-size:13px;margin-left:8px">B:</span>
-          <button data-truth="B" data-v="true">TRUE</button>
-          <button data-truth="B" data-v="false" class="on">FALSE</button>
-          <button data-truth="B" data-v="null">NULL</button>
+          <button data-truth="B" data-v="true" type="button">TRUE</button>
+          <button data-truth="B" data-v="false" class="on" type="button">FALSE</button>
+          <button data-truth="B" data-v="null" type="button">NULL</button>
           <span class="muted" style="font-size:13px;margin-left:8px">op:</span>
-          <button data-op="AND" class="on">AND</button>
-          <button data-op="OR">OR</button>
-          <button data-op="NOT">NOT (A only)</button>
+          <button data-op="AND" class="on" type="button">AND</button>
+          <button data-op="OR" type="button">OR</button>
+          <button data-op="NOT" type="button">NOT (A only)</button>
         </div>
         <div id="truthResult" style="margin-top:12px" aria-live="polite"></div>
         <div class="table-wrap" style="margin-top:14px">
@@ -665,12 +678,12 @@ FROM customers;
         <h2><span class="section-num">12</span> Error position highlighter</h2>
         <p class="muted" style="margin-top:0">Break something on purpose — the exact offending character is highlighted inline with the parser's message.</p>
         <div class="presets">
-          <button data-err="SELECT * FORM customers">bad keyword</button>
-          <button data-err="SELECT name, FROM customers">dangling comma</button>
-          <button data-err="SELECT 'unterminated FROM customers">unterminated string</button>
-          <button data-err="SELECT * FROM customers WHERE city = = 'Lahore'">double operator</button>
-          <button data-err="SELECT NoSuchCol FROM customers">unknown column</button>
-          <button data-err="SELECT COUNT(*) FROM missing_table">unknown table</button>
+          <button data-err="SELECT * FORM customers" type="button">bad keyword</button>
+          <button data-err="SELECT name, FROM customers" type="button">dangling comma</button>
+          <button data-err="SELECT 'unterminated FROM customers" type="button">unterminated string</button>
+          <button data-err="SELECT * FROM customers WHERE city = = 'Lahore'" type="button">double operator</button>
+          <button data-err="SELECT NoSuchCol FROM customers" type="button">unknown column</button>
+          <button data-err="SELECT COUNT(*) FROM missing_table" type="button">unknown table</button>
         </div>
         <div id="errOut" aria-live="polite"></div>
       </section>
@@ -1652,7 +1665,7 @@ ${esc(sql)}
 
     // schema tabs
     $('schemaTabs').innerHTML = Object.keys(DB).map(t =>
-      `<button data-t="${t}" class="${t === currentSchemaTable ? 'active' : ''}">${t} (${DB[t].rows.length})</button>`
+      `<button data-t="${t}" class="${t === currentSchemaTable ? 'active' : ''}" type="button">${t} (${DB[t].rows.length})</button>`
     ).join('');
     document.querySelectorAll('.schema-tabs button').forEach(b => {
       b.addEventListener('click', () => renderSchema(b.dataset.t));
@@ -1673,5 +1686,7 @@ ${esc(sql)}
     renderSchema('products');
     run();
   </script>
-</body>
+
+  </main>
+  </body>
 </html>
