@@ -116,5 +116,5 @@ def test_limit_must_be_a_whole_number():
 
 
 def test_an_empty_query_says_what_was_expected():
-    with pytest.raises(SqlError, match="expected 'select'"):
+    with pytest.raises(SqlError, match="expected SELECT, INSERT, UPDATE or DELETE"):
         parse("")

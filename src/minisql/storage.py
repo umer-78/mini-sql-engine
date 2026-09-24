@@ -8,7 +8,7 @@ non-empty value in it is an integer. That is what stops a postcode column like
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +66,7 @@ class Table:
     columns: list[str]
     types: dict[str, str]
     rows: list[Row]
+    line_ending: str = "\n"  # kept from the source file so a save does not rewrite every line
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -73,6 +74,8 @@ class Table:
     @classmethod
     def from_csv(cls, path: Path, name: str | None = None) -> Table:
         with path.open(newline="", encoding="utf-8") as handle:
+            first_line = handle.readline()
+            handle.seek(0)
             reader = csv.reader(handle)
             try:
                 header = next(reader)
@@ -93,12 +96,33 @@ class Table:
             {column: convert(cells[column][i], types[column]) for column in columns}
             for i in range(len(raw))
         ]
-        return cls(name or path.stem, columns, types, rows)
+        line_ending = "\r\n" if first_line.endswith("\r\n") else "\n"
+        return cls(name or path.stem, columns, types, rows, line_ending)
+
+    def to_csv(self, path: Path) -> None:
+        """Writes the table back out. NULL becomes an empty cell, as it was read.
+
+        Floats keep their decimal point (71.0, not 71) so the column is read back
+        as float rather than quietly turning into an integer column.
+        """
+        def cell(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, float):
+                return repr(value)
+            return str(value)
+
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle, lineterminator=self.line_ending)
+            writer.writerow(self.columns)
+            for row in self.rows:
+                writer.writerow([cell(row[column]) for column in self.columns])
 
 
 @dataclass
 class Database:
     tables: dict[str, Table]
+    changed: set[str] = field(default_factory=set)  # tables written to since loading/saving
 
     @classmethod
     def from_directory(cls, directory: str | Path) -> Database:
@@ -122,3 +146,14 @@ class Database:
 
     def __contains__(self, name: str) -> bool:
         return name.lower() in self.tables
+
+    def save(self, directory: str | Path) -> list[str]:
+        """Writes every changed table to `<directory>/<table>.csv`. Returns their names."""
+        path = Path(directory)
+        saved = []
+        for key in sorted(self.changed):
+            table = self.tables[key]
+            table.to_csv(path / f"{table.name}.csv")
+            saved.append(table.name)
+        self.changed.clear()
+        return saved

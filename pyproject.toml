@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "minisql"
-version = "1.0.0"
-description = "A small SQL engine that runs SELECT queries over CSV files"
+version = "1.1.0"
+description = "A small SQL engine that runs queries and edits over CSV files"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

@@ -2,7 +2,8 @@
 
 A small SQL engine, written from scratch in Python with no dependencies. It
 tokenizes, parses and executes `SELECT` queries — joins, aggregates, grouping,
-ordering and all — against ordinary CSV files.
+ordering, `UNION` and `CASE` — against ordinary CSV files, and can change them with
+`INSERT`, `UPDATE` and `DELETE`.
 
 ```
 $ minisql data -c "SELECT p.category, SUM(i.quantity * i.unit_price) AS revenue
@@ -22,9 +23,9 @@ $ minisql data -c "SELECT p.category, SUM(i.quantity * i.unit_price) AS revenue
 
 No SQLite, no pandas, no parser generator. The tokenizer, the recursive-descent
 parser, the expression evaluator and the execution model are all in
-[`src/minisql/`](src/minisql), in about 900 statements of Python.
+[`src/minisql/`](src/minisql), in about 1,200 statements of Python.
 
-- **113 tests, 94% coverage**, Python 3.10–3.12
+- **139 tests, 95% coverage**, Python 3.10–3.12
 - Three-valued NULL logic, the way SQL actually defines it
 - Errors point at the character that caused them
 
@@ -34,7 +35,7 @@ parser, the expression evaluator and the execution model are all in
 git clone https://github.com/umer-78/mini-sql-engine.git
 cd mini-sql-engine
 pip install -e ".[dev]"
-pytest                          # 113 tests
+pytest                          # 139 tests
 
 minisql data                    # interactive shell over the sample data
 minisql data -c "SELECT * FROM products LIMIT 3"
@@ -59,10 +60,44 @@ WHERE  cond AND cond OR NOT cond
 GROUP BY col [HAVING aggregate-condition]
 ORDER BY col | alias | expr [ASC | DESC], …
 LIMIT n OFFSET m
+
+SELECT … UNION [ALL] SELECT …   [ORDER BY output-column | position] [LIMIT n]
+CASE WHEN cond THEN x [WHEN …] [ELSE y] END,  CASE col WHEN 1 THEN x … END
+
+INSERT INTO table [(col, …)] VALUES (…), (…)  |  INSERT INTO table [(col, …)] SELECT …
+UPDATE table SET col = expr [, …] [WHERE cond]
+DELETE FROM table [WHERE cond]
 ```
 
 Aggregates: `COUNT(*)`, `COUNT(col)`, `COUNT(DISTINCT col)`, `SUM`, `AVG`,
 `MIN`, `MAX`. The full grammar is in [docs/GRAMMAR.md](docs/GRAMMAR.md).
+
+### Changing data
+
+`INSERT`, `UPDATE` and `DELETE` change the tables in memory. Nothing touches your
+CSV files until you ask: `.save` in the shell, or `--save` with `-c`/`-f`.
+
+- **Types are checked.** A column keeps the type it was read with: `'eight'` will
+  not go into a whole-number column, and a number will not go into a text column
+  (the error suggests quoting it). An integer going into a decimal column is
+  widened, as SQL does. A column with no values yet takes the type of the first one.
+- **Each statement is all or nothing.** Every row is checked before any is
+  written, so a bad value on the fifth `VALUES` row leaves the table unchanged.
+- **`UPDATE` reads the old row.** `SET a = b, b = a` swaps the two columns,
+  because every `SET` sees the row as it was before the statement.
+- **`UNION` removes duplicate rows; `UNION ALL` keeps them.** `ORDER BY` and
+  `LIMIT` after the last `SELECT` apply to the whole result, not the last branch.
+
+```
+$ minisql data --save -c "UPDATE products SET price = price + 500 WHERE category = 'Audio'"
++---------+
+| updated |
++---------+
+| 3       |
++---------+
+1 row
+saved products
+```
 
 ## How a query runs
 
@@ -138,7 +173,7 @@ points you at `HAVING`.
 
 ```
 $ minisql data
-minisql 1.0.0 — 4 table(s) loaded. '.help' for help.
+minisql 1.1.0 — 4 table(s) loaded. '.help' for help.
 sql> .tables
   customers         25 rows  5 columns
   order_items      153 rows  5 columns
@@ -166,8 +201,10 @@ sql> SELECT c.name, COUNT(o.id) AS orders
 5 rows
 ```
 
-`.format table|csv|json` switches the output. Piped input goes through the same
-loop, so `echo '.tables' | minisql data` behaves exactly like typing it.
+`.format table|csv|json` switches the output and `.save` writes changed tables
+back to their CSV files; leaving with unsaved changes prints a reminder. Piped
+input goes through the same loop, so `echo '.tables' | minisql data` behaves
+exactly like typing it.
 
 ## As a library
 
@@ -186,24 +223,25 @@ result.dicts()        # [{'name': 'Standing desk', 'price': 92000}, …]
 
 ```
 $ pytest
-113 passed in 0.17s
+139 passed in 0.14s
 
 $ pytest --cov=minisql
 Name                      Stmts   Miss  Cover
 ---------------------------------------------
-src/minisql/storage.py       86      0   100%
+src/minisql/storage.py      112      0   100%
 src/minisql/tokens.py        99      0   100%
-src/minisql/parser.py       213      3    99%
-src/minisql/ast.py           81      2    98%
+src/minisql/parser.py       297      5    98%
+src/minisql/ast.py          109      2    98%
 src/minisql/format.py        36      2    94%
-src/minisql/executor.py     300     26    91%
-src/minisql/cli.py          111     16    86%
+src/minisql/executor.py     442     31    93%
+src/minisql/cli.py          128     19    85%
 ---------------------------------------------
-TOTAL                       938     53    94%
+TOTAL                      1235     63    95%
 ```
 
 The suite is split the way the engine is: `test_tokens.py`, `test_parser.py`,
-`test_executor.py`, `test_storage.py`, `test_cli.py`, plus `test_sample_data.py`,
+`test_executor.py`, `test_write.py` (INSERT/UPDATE/DELETE, UNION, CASE),
+`test_storage.py`, `test_cli.py`, plus `test_sample_data.py`,
 which checks the shipped CSVs — no orphaned foreign keys, no cancelled order with
 a shipping date — so the README's figures cannot quietly go stale.
 
@@ -223,13 +261,13 @@ src/minisql/cli.py        the `minisql` command and its shell
 data/                     sample database (4 CSVs)
 tools/make_data.py        regenerates data/ from a fixed seed
 docs/GRAMMAR.md           the grammar, as the parser reads it
-tests/                    113 tests
+tests/                    139 tests
 ```
 
 ## Not supported
 
-`INSERT`, `UPDATE`, `DELETE`, subqueries, `UNION`, window functions, `CASE`,
-`RIGHT`/`FULL JOIN`, indexes. Joins are nested-loop, so this is for files you can
+Subqueries, window functions, `RIGHT`/`FULL JOIN`, `CREATE`/`DROP TABLE`,
+transactions across statements, indexes. Joins are nested-loop, so this is for files you can
 hold in memory, not for a warehouse. What is here is meant to be correct and
 readable rather than complete.
 

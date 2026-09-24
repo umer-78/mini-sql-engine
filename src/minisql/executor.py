@@ -16,16 +16,22 @@ from typing import Any
 from .ast import (
     Aggregate,
     Binary,
+    Case,
     Column,
+    Delete,
     Expr,
     InList,
+    Insert,
     IsNull,
     Like,
     Literal,
     Select,
+    Statement,
     Unary,
+    Union,
+    Update,
 )
-from .storage import Database, Row
+from .storage import Database, Row, Table
 from .tokens import SqlError
 
 NUMBER = (int, float)
@@ -194,6 +200,19 @@ def evaluate(expr: Expr, row: Row, scope: Scope, groups: dict[int, Any] | None =
         )
         return not found if expr.negated else found
 
+    if isinstance(expr, Case):
+        if expr.operand is None:
+            for condition, value in expr.whens:
+                if _truthy(evaluate(condition, row, scope, groups)):
+                    return evaluate(value, row, scope, groups)
+        else:
+            subject = evaluate(expr.operand, row, scope, groups)
+            for candidate, value in expr.whens:
+                # NULL never matches a WHEN, not even `WHEN NULL`: = with NULL is unknown.
+                if _compare("=", subject, evaluate(candidate, row, scope, groups)) is True:
+                    return evaluate(value, row, scope, groups)
+        return None if expr.default is None else evaluate(expr.default, row, scope, groups)
+
     if isinstance(expr, Like):
         result = _like(evaluate(expr.value, row, scope, groups), evaluate(expr.pattern, row, scope, groups))
         if result is None:
@@ -227,6 +246,11 @@ def _children(expr: Expr) -> list[Expr]:
         return [expr.value, *expr.items]
     if isinstance(expr, Aggregate):
         return [expr.arg] if expr.arg is not None else []
+    if isinstance(expr, Case):
+        parts = [] if expr.operand is None else [expr.operand]
+        for condition, value in expr.whens:
+            parts += [condition, value]
+        return parts + ([] if expr.default is None else [expr.default])
     return []
 
 
@@ -269,7 +293,18 @@ class Engine:
     def __init__(self, database: Database):
         self.db = database
 
-    def execute(self, query: Select) -> Result:
+    def execute(self, statement: Statement) -> Result:
+        if isinstance(statement, Union):
+            return self._union(statement)
+        if isinstance(statement, Insert):
+            return self._insert(statement)
+        if isinstance(statement, Update):
+            return self._update(statement)
+        if isinstance(statement, Delete):
+            return self._delete(statement)
+        return self._select(statement)
+
+    def _select(self, query: Select) -> Result:
         scope = Scope()
         rows = self._from(query, scope)
 
@@ -464,3 +499,155 @@ class Engine:
             return evaluate(expr, row.source, scope, row.groups)
         except SqlError as error:
             raise SqlError(f"ORDER BY {self._label(expr, 0)}: {error}") from None
+
+    # -- UNION -------------------------------------------------------------
+
+    def _union(self, union: Union) -> Result:
+        results = [self._select(select) for select in union.selects]
+        width = len(results[0].columns)
+        for number, result in enumerate(results[1:], start=2):
+            if len(result.columns) != width:
+                raise SqlError(
+                    f"UNION: SELECT {number} returns {len(result.columns)} column(s), the first returns {width}"
+                )
+
+        rows = list(results[0].rows)
+        for keep_all, result in zip(union.keep_all, results[1:], strict=True):
+            rows.extend(result.rows)
+            if not keep_all:  # UNION removes duplicates from everything so far
+                rows = list({tuple(row): row for row in reversed(rows)}.values())[::-1]
+
+        columns = results[0].columns
+        for order in reversed(union.order_by):
+            index = self._union_column(order.expr, columns)
+            rows.sort(key=lambda row, i=index: _sort_key(row[i]), reverse=order.descending)
+
+        if union.offset:
+            rows = rows[union.offset :]
+        if union.limit is not None:
+            rows = rows[: union.limit]
+        return Result(list(columns), [list(row) for row in rows])
+
+    @staticmethod
+    def _union_column(expr: Expr, columns: list[str]) -> int:
+        if isinstance(expr, Column):
+            for index, name in enumerate(columns):
+                if name.lower() == expr.name.lower():
+                    return index
+        if isinstance(expr, Literal) and isinstance(expr.value, int) and not isinstance(expr.value, bool) \
+                and 1 <= expr.value <= len(columns):
+            return expr.value - 1
+        raise SqlError(
+            f"ORDER BY after UNION must name an output column ({', '.join(columns)}) or its position"
+        )
+
+    # -- INSERT, UPDATE, DELETE -------------------------------------------
+    #
+    # Each statement checks every row before changing any: a type error on the
+    # fifth VALUES row leaves the table exactly as it was, not half written.
+
+    @staticmethod
+    def _column_name(table: Table, name: str) -> str:
+        bare = name.split(".", 1)[1] if "." in name and name.split(".", 1)[0].lower() == table.name.lower() else name
+        for column in table.columns:
+            if column.lower() == bare.lower():
+                return column
+        raise SqlError(f"table {table.name!r} has no column {name!r} (columns: {', '.join(table.columns)})")
+
+    @staticmethod
+    def _coerce(table: Table, column: str, value: Any) -> Any:
+        """Fits a value to the column's type, or explains why it does not fit."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            value = int(value)
+        kind = table.types[column]
+        # A column with no values yet (a new, empty table) takes the first type it is given.
+        if all(row[column] is None for row in table.rows):
+            kind = "int" if isinstance(value, int) else "float" if isinstance(value, float) else "str"
+            table.types[column] = kind
+        if kind == "int":
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float) and value.is_integer():
+                return int(value)
+        elif kind == "float":
+            if isinstance(value, NUMBER):
+                return float(value)
+        elif isinstance(value, str):
+            return value
+        names = {"int": "whole numbers", "float": "numbers", "str": "text"}
+        hint = " — put it in quotes to store it as text" if kind == "str" else ""
+        raise SqlError(f"column {table.name}.{column} holds {names[kind]}; {value!r} does not fit{hint}")
+
+    def _insert(self, insert: Insert) -> Result:
+        table = self.db.get(insert.table)
+        columns = [self._column_name(table, name) for name in insert.columns] or list(table.columns)
+        if len(set(columns)) != len(columns):
+            raise SqlError("INSERT names the same column twice")
+
+        if insert.select is not None:
+            source = self.execute(insert.select)
+            if len(source.columns) != len(columns):
+                raise SqlError(f"INSERT expects {len(columns)} value(s) per row; the SELECT returns {len(source.columns)}")
+            values = source.rows
+        else:
+            values = []
+            for number, exprs in enumerate(insert.rows, start=1):
+                if len(exprs) != len(columns):
+                    raise SqlError(f"VALUES row {number} has {len(exprs)} value(s); expected {len(columns)}")
+                values.append([evaluate(expr, {}, Scope()) for expr in exprs])
+
+        new_rows = []
+        for row_values in values:
+            row: Row = dict.fromkeys(table.columns)
+            for column, value in zip(columns, row_values, strict=True):
+                row[column] = self._coerce(table, column, value)
+            new_rows.append(row)
+
+        table.rows.extend(new_rows)
+        if new_rows:
+            self.db.changed.add(table.name.lower())
+        return Result(["inserted"], [[len(new_rows)]])
+
+    def _single_table(self, name: str, where: Expr | None) -> tuple[Table, Scope, list[tuple[Row, Row]]]:
+        """The rows of one table that WHERE keeps, each beside its qualified form."""
+        table = self.db.get(name)
+        scope = Scope()
+        scope.add_table(table.name, table.columns)
+        if where is not None and collect_aggregates(where, []):
+            raise SqlError("WHERE cannot use an aggregate")
+        matches = []
+        for row in table.rows:
+            qualified = {f"{table.name}.{c}": row[c] for c in table.columns}
+            if where is None or _truthy(evaluate(where, qualified, scope)):
+                matches.append((row, qualified))
+        return table, scope, matches
+
+    def _update(self, update: Update) -> Result:
+        table, scope, matches = self._single_table(update.table, update.where)
+        targets = [(self._column_name(table, name), expr) for name, expr in update.assignments]
+        if len({column for column, _ in targets}) != len(targets):
+            raise SqlError("UPDATE sets the same column twice")
+        for _, expr in targets:
+            if collect_aggregates(expr, []):
+                raise SqlError("SET cannot use an aggregate")
+
+        # Every SET expression sees the row as it was before this statement.
+        changes = [
+            (row, {column: self._coerce(table, column, evaluate(expr, qualified, scope)) for column, expr in targets})
+            for row, qualified in matches
+        ]
+        for row, new_values in changes:
+            row.update(new_values)
+        if changes:
+            self.db.changed.add(table.name.lower())
+        return Result(["updated"], [[len(changes)]])
+
+    def _delete(self, delete: Delete) -> Result:
+        table, _, matches = self._single_table(delete.table, delete.where)
+        doomed = {id(row) for row, _ in matches}
+        table.rows[:] = [row for row in table.rows if id(row) not in doomed]
+        if doomed:
+            self.db.changed.add(table.name.lower())
+        return Result(["deleted"], [[len(doomed)]])

@@ -27,6 +27,8 @@ KEYWORDS = frozenset({
     "as", "join", "inner", "left", "on", "and", "or", "not", "null", "is", "in",
     "like", "asc", "desc", "distinct", "true", "false",
     "count", "sum", "avg", "min", "max",
+    "case", "when", "then", "else", "end", "union", "all",
+    "insert", "into", "values", "update", "set", "delete",
 })
 
 # Longest first: '<=' must be matched before '<'.

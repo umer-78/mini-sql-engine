@@ -17,9 +17,11 @@ DOT_HELP = """Shell commands:
   .tables            list the tables
   .schema [table]    show columns and inferred types
   .format table|csv|json
+  .save              write tables changed by INSERT/UPDATE/DELETE back to their CSVs
   .help              this text
   .quit              leave
-Anything else is run as SQL. A query may span lines; finish it with ';'."""
+Anything else is run as SQL. A query may span lines; finish it with ';'.
+INSERT, UPDATE and DELETE change the tables in memory until you .save."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-f", "--file", help="run every query in a .sql file and exit")
     parser.add_argument(
         "--format", choices=["table", "csv", "json"], default="table", help="output format"
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="with -c or -f: write tables changed by INSERT/UPDATE/DELETE back to the CSV files",
     )
     parser.add_argument("--version", action="version", version=f"minisql {__version__}")
     return parser
@@ -68,7 +75,18 @@ def split_statements(text: str) -> list[str]:
     return [s.strip() for s in statements if s.strip()]
 
 
-def shell(engine: Engine, database: Database, style: str, prompt: bool = True) -> int:
+def save_changes(database: Database, directory: str) -> None:
+    saved = database.save(directory)
+    print(f"saved {', '.join(saved)}" if saved else "nothing to save", file=sys.stderr)
+
+
+def warn_unsaved(database: Database) -> None:
+    if database.changed:
+        names = ", ".join(sorted(database.changed))
+        print(f"note: changes to {names} were not saved (use .save before leaving)", file=sys.stderr)
+
+
+def shell(engine: Engine, database: Database, style: str, prompt: bool = True, directory: str = ".") -> int:
     """The read-run loop, used both interactively and for piped input.
 
     Piped input goes through the same loop rather than a separate code path, so
@@ -90,7 +108,11 @@ def shell(engine: Engine, database: Database, style: str, prompt: bool = True) -
         stripped = line.strip()
         if not buffer and stripped.startswith("."):
             if stripped in {".quit", ".exit"}:
+                warn_unsaved(database)
                 return 0
+            if stripped == ".save":
+                save_changes(database, directory)
+                continue
             style = handle_dot(stripped, database, style)
             continue
 
@@ -107,6 +129,7 @@ def shell(engine: Engine, database: Database, style: str, prompt: bool = True) -
     for statement in split_statements("\n".join(buffer)):
         failed = not run_sql(engine, statement, style, sys.stdout) or failed
 
+    warn_unsaved(database)
     return 1 if failed else 0
 
 
@@ -149,15 +172,19 @@ def main(argv: list[str] | None = None) -> int:
 
     engine = Engine(database)
 
-    if args.command:
-        return 0 if run_sql(engine, args.command, args.format, sys.stdout) else 1
-
-    if args.file:
-        text = Path(args.file).read_text(encoding="utf-8")
-        ok = True
-        for statement in split_statements(text):
-            ok = run_sql(engine, statement, args.format, sys.stdout) and ok
-            print()
+    if args.command or args.file:
+        if args.command:
+            ok = run_sql(engine, args.command, args.format, sys.stdout)
+        else:
+            text = Path(args.file).read_text(encoding="utf-8")
+            ok = True
+            for statement in split_statements(text):
+                ok = run_sql(engine, statement, args.format, sys.stdout) and ok
+                print()
+        if args.save:
+            save_changes(database, args.directory)
+        elif database.changed:
+            print("note: changes were not saved (add --save to write them)", file=sys.stderr)
         return 0 if ok else 1
 
-    return shell(engine, database, args.format, prompt=sys.stdin.isatty())
+    return shell(engine, database, args.format, prompt=sys.stdin.isatty(), directory=args.directory)

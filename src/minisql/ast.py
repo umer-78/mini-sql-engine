@@ -121,3 +121,51 @@ class Select:
     offset: int = 0
     distinct: bool = False
     columns: tuple[str, ...] = field(default=())
+
+
+@dataclass(frozen=True)
+class Case(Expr):
+    """`CASE [operand] WHEN .. THEN .. [ELSE ..] END`.
+
+    With an operand it is the "simple" form (`CASE status WHEN 'paid' THEN 1`),
+    which compares with `=`; without one each WHEN is a condition of its own.
+    """
+
+    operand: Expr | None
+    whens: tuple[tuple[Expr, Expr], ...]
+    default: Expr | None = None
+
+
+@dataclass(frozen=True)
+class Union:
+    """`SELECT .. UNION [ALL] SELECT ..`. ORDER BY and LIMIT apply to the whole result."""
+
+    selects: tuple[Select, ...]
+    keep_all: tuple[bool, ...]  # one flag per UNION keyword: True for UNION ALL
+    order_by: tuple[OrderItem, ...] = ()
+    limit: int | None = None
+    offset: int = 0
+
+
+@dataclass(frozen=True)
+class Insert:
+    table: str
+    columns: tuple[str, ...]  # empty means every column, in table order
+    rows: tuple[tuple[Expr, ...], ...] = ()
+    select: Select | Union | None = None  # INSERT INTO t SELECT ...
+
+
+@dataclass(frozen=True)
+class Update:
+    table: str
+    assignments: tuple[tuple[str, Expr], ...]
+    where: Expr | None = None
+
+
+@dataclass(frozen=True)
+class Delete:
+    table: str
+    where: Expr | None = None
+
+
+Statement = Select | Union | Insert | Update | Delete

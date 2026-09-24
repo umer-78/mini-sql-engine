@@ -145,3 +145,28 @@ def test_a_failed_query_from_piped_input_exits_one(data_dir, capsys, monkeypatch
     monkeypatch.setattr("sys.stdin", io.StringIO("SELECT nope FROM people;\n"))
 
     assert main([data_dir]) == 1
+
+
+def test_writes_are_kept_only_with_save(tmp_path, capsys):
+    from minisql.cli import main
+
+    (tmp_path / "t.csv").write_text("id,name\n1,a\n", encoding="utf-8")
+    assert main([str(tmp_path), "-c", "INSERT INTO t VALUES (2, 'b')"]) == 0
+    assert "not saved" in capsys.readouterr().err
+    assert (tmp_path / "t.csv").read_text(encoding="utf-8") == "id,name\n1,a\n"
+
+    assert main([str(tmp_path), "--save", "-c", "INSERT INTO t VALUES (2, 'b')"]) == 0
+    assert "saved t" in capsys.readouterr().err
+    assert (tmp_path / "t.csv").read_text(encoding="utf-8") == "id,name\n1,a\n2,b\n"
+
+
+def test_shell_save_command(tmp_path, monkeypatch, capsys):
+    import io
+
+    from minisql.cli import main
+
+    (tmp_path / "t.csv").write_text("id,name\n1,a\n", encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.StringIO("DELETE FROM t WHERE id = 1;\n.save\n"))
+    assert main([str(tmp_path)]) == 0
+    assert "saved t" in capsys.readouterr().err
+    assert (tmp_path / "t.csv").read_text(encoding="utf-8") == "id,name\n"

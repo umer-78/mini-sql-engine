@@ -11,9 +11,12 @@ from __future__ import annotations
 from .ast import (
     Aggregate,
     Binary,
+    Case,
     Column,
+    Delete,
     Expr,
     InList,
+    Insert,
     IsNull,
     Join,
     Like,
@@ -21,8 +24,11 @@ from .ast import (
     OrderItem,
     Select,
     SelectItem,
+    Statement,
     TableRef,
     Unary,
+    Union,
+    Update,
 )
 from .tokens import Kind, SqlError, Token, tokenize
 
@@ -70,7 +76,50 @@ class Parser:
 
     # -- statement ---------------------------------------------------------
 
-    def parse(self) -> Select:
+    def parse(self) -> Statement:
+        if self.at("select"):
+            statement: Statement = self._query()
+        elif self.at("insert"):
+            statement = self._insert()
+        elif self.at("update"):
+            statement = self._update()
+        elif self.at("delete"):
+            statement = self._delete()
+        else:
+            found = "end of query" if self.current.kind is Kind.EOF else repr(self.current.text)
+            raise SqlError(
+                f"expected SELECT, INSERT, UPDATE or DELETE, found {found}", self.current.position, self.sql
+            )
+
+        if self.current.kind is not Kind.EOF:
+            raise SqlError(
+                f"unexpected {self.current.text!r} after the end of the query",
+                self.current.position,
+                self.sql,
+            )
+        return statement
+
+    def _query(self) -> Select | Union:
+        """One SELECT, or several joined by UNION [ALL].
+
+        ORDER BY, LIMIT and OFFSET come after the last SELECT and apply to the
+        whole result, as in standard SQL — not to the last branch alone.
+        """
+        cores = [self._select_core()]
+        keep_all: list[bool] = []
+        while self.accept("union"):
+            keep_all.append(self.accept("all") is not None)
+            if not self.at("select"):
+                found = "end of query" if self.current.kind is Kind.EOF else repr(self.current.text)
+                raise SqlError(f"expected SELECT after UNION, found {found}", self.current.position, self.sql)
+            cores.append(self._select_core())
+
+        order_by, limit, offset = self._order_limit()
+        if len(cores) == 1:
+            return Select(**cores[0], order_by=order_by, limit=limit, offset=offset)
+        return Union(tuple(Select(**core) for core in cores), tuple(keep_all), order_by, limit, offset)
+
+    def _select_core(self) -> dict:
         self.expect("select")
         distinct = self.accept("distinct") is not None
         items = self._select_items()
@@ -87,7 +136,20 @@ class Parser:
             group_by = self._expression_list()
 
         having = self._expression() if self.accept("having") else None
+        if having is not None and not group_by:
+            raise SqlError("HAVING needs a GROUP BY")
 
+        return {
+            "items": tuple(items),
+            "source": source,
+            "joins": tuple(joins),
+            "where": where,
+            "group_by": tuple(group_by),
+            "having": having,
+            "distinct": distinct,
+        }
+
+    def _order_limit(self) -> tuple[tuple[OrderItem, ...], int | None, int]:
         order_by: list[OrderItem] = []
         if self.accept("order"):
             self.expect("by")
@@ -108,29 +170,58 @@ class Parser:
             limit = self._non_negative_int("LIMIT")
         if self.accept("offset"):
             offset = self._non_negative_int("OFFSET")
+        return tuple(order_by), limit, offset
 
-        if self.current.kind is not Kind.EOF:
-            raise SqlError(
-                f"unexpected {self.current.text!r} after the end of the query",
-                self.current.position,
-                self.sql,
-            )
+    # -- writes ------------------------------------------------------------
 
-        if having is not None and not group_by:
-            raise SqlError("HAVING needs a GROUP BY")
+    def _name_list(self, what: str) -> list[str]:
+        names = [self.expect_name(what)]
+        while self.accept(","):
+            names.append(self.expect_name(what))
+        return names
 
-        return Select(
-            items=tuple(items),
-            source=source,
-            joins=tuple(joins),
-            where=where,
-            group_by=tuple(group_by),
-            having=having,
-            order_by=tuple(order_by),
-            limit=limit,
-            offset=offset,
-            distinct=distinct,
-        )
+    def _insert(self) -> Insert:
+        self.expect("insert")
+        self.expect("into")
+        table = self.expect_name("table name")
+        columns: list[str] = []
+        if self.accept("("):
+            columns = self._name_list("column name")
+            self.expect(")")
+
+        if self.at("select"):
+            return Insert(table, tuple(columns), select=self._query())
+
+        self.expect("values")
+        rows: list[tuple[Expr, ...]] = []
+        while True:
+            self.expect("(")
+            rows.append(tuple(self._expression_list()))
+            self.expect(")")
+            if not self.accept(","):
+                break
+        return Insert(table, tuple(columns), tuple(rows))
+
+    def _update(self) -> Update:
+        self.expect("update")
+        table = self.expect_name("table name")
+        self.expect("set")
+        assignments: list[tuple[str, Expr]] = []
+        while True:
+            column = self.expect_name("column name")
+            self.expect("=")
+            assignments.append((column, self._expression()))
+            if not self.accept(","):
+                break
+        where = self._expression() if self.accept("where") else None
+        return Update(table, tuple(assignments), where)
+
+    def _delete(self) -> Delete:
+        self.expect("delete")
+        self.expect("from")
+        table = self.expect_name("table name")
+        where = self._expression() if self.accept("where") else None
+        return Delete(table, where)
 
     def _non_negative_int(self, what: str) -> int:
         token = self.current
@@ -290,6 +381,9 @@ class Parser:
         if token.kind is Kind.KEYWORD and token.value.lower() in AGGREGATES:
             return self._aggregate()
 
+        if self.accept("case"):
+            return self._case(token)
+
         if token.kind is Kind.IDENT:
             self.advance()
             return Column(token.text)
@@ -301,6 +395,19 @@ class Parser:
 
         found = "end of query" if token.kind is Kind.EOF else repr(token.text)
         raise SqlError(f"expected a value, found {found}", token.position, self.sql)
+
+    def _case(self, start: Token) -> Expr:
+        operand = None if self.at("when", "else", "end") else self._expression()
+        whens: list[tuple[Expr, Expr]] = []
+        while self.accept("when"):
+            condition = self._expression()
+            self.expect("then")
+            whens.append((condition, self._expression()))
+        if not whens:
+            raise SqlError("CASE needs at least one WHEN ... THEN", start.position, self.sql)
+        default = self._expression() if self.accept("else") else None
+        self.expect("end")
+        return Case(operand, tuple(whens), default)
 
     def _aggregate(self) -> Expr:
         func = self.advance().value.lower()
@@ -317,5 +424,5 @@ class Parser:
         return Aggregate(func, arg, distinct)
 
 
-def parse(sql: str) -> Select:
+def parse(sql: str) -> Statement:
     return Parser(sql).parse()
