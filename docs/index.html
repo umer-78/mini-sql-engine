@@ -24,16 +24,16 @@
   --border-strong: #d0d3da;
   --text: #0f1216;
   --text-secondary: #3d4450;
-  --muted: #6b7280;
+  --muted: #5f6673;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-soft: #eff6ff;
   --accent-glow: rgb(37 99 235 / 0.15);
-  --good: #059669;
+  --good: #047857;
   --good-soft: #ecfdf5;
-  --bad: #dc2626;
+  --bad: #b91c1c;
   --bad-soft: #fef2f2;
-  --warn: #d97706;
+  --warn: #a14c07;
   --warn-soft: #fffbeb;
   --radius-sm: 8px;
   --radius: 14px;
@@ -485,6 +485,16 @@ footer a:hover { color: var(--accent); }
 }
 .copy-btn2:hover { border-color: var(--accent); color: var(--accent); }
 </style>
+<style id="site-fixes">
+/* site-fixes: shared navigation and accessibility fixes (contrast, skip link, focusable scroll areas) */
+.skip-link { position: absolute; left: 8px; top: -80px; z-index: 10000; padding: 8px 14px; border-radius: 8px; background: var(--text, #0f1216); color: var(--bg, #fff); font-weight: 600; text-decoration: none; }
+.skip-link:focus { top: 8px; left: 8px; }
+.site-crumb { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
+.site-crumb:hover, .site-crumb:focus-visible { color: var(--accent); }
+[data-scroll-focus]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-color-scheme: dark) { :root { --accent: #60a5fa; --accent-hover: #93c5fd; } .btn.primary, button.primary { color: #0a0c10; } }
+@media (prefers-color-scheme: dark) { :root { --muted: #9aa1b3; } }
+</style>
 </head>
 <body>
   <noscript><p style="margin:16px;padding:12px 16px;border-radius:8px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;font-family:system-ui,sans-serif">This interactive demo requires JavaScript. Please enable it to run the demo in your browser.</p></noscript>
@@ -494,6 +504,7 @@ footer a:hover { color: var(--accent); }
   <main id="main">
 
   <div class="wrap">
+    <a class="site-crumb" href="https://umer-78.github.io/">← All projects</a>
     <header class="top">
       <div class="brand">
         <div class="icon">M</div>
@@ -589,7 +600,7 @@ FROM customers;
       <h2><span class="section-num">7</span> Schema diagram</h2>
       <p class="muted" style="margin-top:0">All tables with columns, types and foreign keys — animated on load. Hover a table to highlight it; click to jump to its data preview.</p>
       <div class="ds-tabs" id="dsTabs"></div>
-      <div class="schema-diagram"><svg id="schemaSvg" viewBox="0 0 720 360" role="img" aria-label="Entity relationship diagram of the sample database"></svg></div>
+      <div class="schema-diagram"><svg id="schemaSvg" viewBox="0 0 720 360" role="group" aria-label="Entity relationship diagram of the sample database"></svg></div>
       <div class="legend muted" style="font-size:13px;display:flex;gap:16px;flex-wrap:wrap">
         <span>━━ foreign key</span><span>PK = primary key</span><span> nullable columns marked *</span>
       </div>
@@ -2313,6 +2324,26 @@ function bindCopy(root=document){
           if (document.readyState === 'complete') go(); else window.addEventListener('load', go);
         }
       }
+    })();
+  </script>
+  <!-- site-fixes-js --><script>
+    (() => {
+      const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex]';
+      const fix = () => {
+        for (const el of document.querySelectorAll('body *')) {
+          if (el.hasAttribute('tabindex') || el.closest('svg')) continue;
+          const cs = getComputedStyle(el);
+          if (!/(auto|scroll)/.test(cs.overflowX + cs.overflowY)) continue;
+          if (el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1) continue;
+          if (el.querySelector(FOCUSABLE)) continue;
+          el.tabIndex = 0;
+          el.setAttribute('data-scroll-focus', '');
+        }
+      };
+      let t = 0;
+      const soon = () => { clearTimeout(t); t = setTimeout(fix, 400); };
+      window.addEventListener('load', () => { fix(); new MutationObserver(soon).observe(document.body, { childList: true, subtree: true }); });
+      window.addEventListener('resize', soon);
     })();
   </script>
   </body>
