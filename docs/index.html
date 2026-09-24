@@ -1685,10 +1685,28 @@ ${esc(sql)}
       b.addEventListener('click', () => renderSchema(b.dataset.t));
     });
 
-    document.querySelectorAll('.presets button').forEach(btn => {
+    document.querySelectorAll('.presets button[data-q]').forEach(btn => {
       btn.addEventListener('click', () => {
         $('sql').value = PRESETS[btn.dataset.q];
         run();
+      });
+    });
+
+    // Section 12: run a broken query and highlight the offending character.
+    document.querySelectorAll('[data-err]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sql = btn.dataset.err;
+        try {
+          const ast = parse(tokenize(sql), sql);
+          checkGroupBy(ast);
+          execute(ast, DB);
+          $('errOut').innerHTML = `<span class="err-highlight">${esc(sql)}<span class="err-msg">no error</span></span>`;
+        } catch (e) {
+          const off = Math.min(e.offset ?? 0, Math.max(sql.length - 1, 0));
+          $('errOut').innerHTML = `<span class="err-highlight">${esc(sql.slice(0, off))}` +
+            `<span class="err-ch">${esc(sql[off] ?? ' ')}</span>${esc(sql.slice(off + 1))}` +
+            `<span class="err-msg">${e.semantic ? 'semantic error' : 'parse error'}: ${esc(e.message)}</span></span>`;
+        }
       });
     });
     $('runBtn').addEventListener('click', run);
