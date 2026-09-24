@@ -1,5 +1,9 @@
 # minisql
 
+[![CI](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml)
+
+**Live demo:** https://umer-78.github.io/mini-sql-engine/
+
 A small SQL engine, written from scratch in Python with no dependencies. It
 tokenizes, parses and executes `SELECT` queries — joins, aggregates, grouping,
 ordering, `UNION` and `CASE` — against ordinary CSV files, and can change them with
