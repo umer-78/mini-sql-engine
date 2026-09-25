@@ -49,9 +49,9 @@ column     := name [ '.' name ]
 
 ## Notes
 
-- **Keywords are case-insensitive; identifiers are not.** `SELECT` and `select`
-  are the same word; `Orders` and `orders` are the same table only because table
-  lookup is case-insensitive, but a column name must match the header.
+- **Keywords, table names and column names are all case-insensitive.** `SELECT`
+  and `select` are the same word, `Orders` and `orders` the same table, and
+  `NAME` and `name` the same column (the result column is labelled as you typed it).
 - **Strings use single quotes**, and `''` inside one is a literal quote.
 - **`--` starts a comment** that runs to the end of the line.
 - **`LIMIT` and `OFFSET` take whole numbers only.** `LIMIT 2.5` is an error, not
