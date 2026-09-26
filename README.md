@@ -1,4 +1,4 @@
-# minisql
+# minisql: SQL engine over CSV files
 
 [![CI](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml)
 

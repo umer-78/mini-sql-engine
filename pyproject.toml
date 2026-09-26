@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "minisql"
+name = "mini-sql-engine"
 version = "1.1.0"
-description = "A small SQL engine that runs queries and edits over CSV files"
+description = "A SQL engine written from scratch in Python: tokenizer, recursive-descent parser and executor for SELECT (joins, grouping, aggregates, UNION, CASE) plus INSERT, UPDATE and DELETE over CSV files. No dependencies."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
