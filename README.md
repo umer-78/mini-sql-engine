@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/umer-78/mini-sql-engine/actions/workflows/ci.yml)
 
+[![minisql — a SQL engine: the live demo](.github/preview.jpg)](https://umer-78.github.io/mini-sql-engine/)
+
 **Live demo:** https://umer-78.github.io/mini-sql-engine/
 
 A small SQL engine, written from scratch in Python with no dependencies. It
