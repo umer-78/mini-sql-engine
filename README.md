@@ -31,7 +31,7 @@ No SQLite, no pandas, no parser generator. The tokenizer, the recursive-descent
 parser, the expression evaluator and the execution model are all in
 [`src/minisql/`](src/minisql), in about 1,200 statements of Python.
 
-- ** tests, 95% coverage**, Python 3.10–3.12
+- **160 tests, 95% coverage**, Python 3.10–3.12
 - Three-valued NULL logic, the way SQL actually defines it
 - Errors point at the character that caused them
 
@@ -41,7 +41,7 @@ parser, the expression evaluator and the execution model are all in
 git clone https://github.com/umer-78/mini-sql-engine.git
 cd mini-sql-engine
 pip install -e ".[dev]"
-pytest                          #  tests
+pytest                          # 160 tests
 
 minisql data                    # interactive shell over the sample data
 minisql data -c "SELECT * FROM products LIMIT 3"
@@ -272,7 +272,7 @@ src/minisql/cli.py        the `minisql` command and its shell
 data/                     sample database (4 CSVs)
 tools/make_data.py        regenerates data/ from a fixed seed
 docs/GRAMMAR.md           the grammar, as the parser reads it
-tests/                     tests
+tests/                    160 tests
 ```
 
 ## Not supported
