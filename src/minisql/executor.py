@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from .ast import (
@@ -20,6 +21,7 @@ from .ast import (
     Column,
     Delete,
     Expr,
+    Func,
     InList,
     Insert,
     IsNull,
@@ -195,10 +197,20 @@ def evaluate(expr: Expr, row: Row, scope: Scope, groups: dict[int, Any] | None =
         value = evaluate(expr.value, row, scope, groups)
         if value is None:
             return None
-        found = any(
-            _compare("=", value, evaluate(item, row, scope, groups)) is True for item in expr.items
-        )
+        # SQL's rule: true if any item matches; otherwise unknown if any item
+        # was NULL (it might have matched), else false. So `x NOT IN (1, NULL)`
+        # is never true, which is the classic trap and what SQL databases do.
+        outcomes = [_compare("=", value, evaluate(item, row, scope, groups)) for item in expr.items]
+        if any(o is True for o in outcomes):
+            found = True
+        elif any(o is None for o in outcomes):
+            return None
+        else:
+            found = False
         return not found if expr.negated else found
+
+    if isinstance(expr, Func):
+        return _call(expr.name, [evaluate(arg, row, scope, groups) for arg in expr.args])
 
     if isinstance(expr, Case):
         if expr.operand is None:
@@ -244,6 +256,8 @@ def _children(expr: Expr) -> list[Expr]:
         return [expr.value, expr.pattern]
     if isinstance(expr, InList):
         return [expr.value, *expr.items]
+    if isinstance(expr, Func):
+        return list(expr.args)
     if isinstance(expr, Aggregate):
         return [expr.arg] if expr.arg is not None else []
     if isinstance(expr, Case):
@@ -276,6 +290,39 @@ def _aggregate_value(agg: Aggregate, rows: list[Row], scope: Scope) -> Any:
     if agg.func == "sum":
         return sum(values)
     return sum(values) / len(values)
+
+
+def _call(name: str, args: list[Any]) -> Any:
+    """Scalar functions. Like SQL, NULL in gives NULL out, except COALESCE and
+    NULLIF, whose whole point is handling NULL."""
+    if name == "coalesce":
+        return next((a for a in args if a is not None), None)
+    if name == "nullif":
+        return None if _compare("=", args[0], args[1]) is True else args[0]
+    if any(a is None for a in args):
+        return None
+    value = args[0]
+    if name in {"upper", "lower", "trim", "length"}:
+        text = value if isinstance(value, str) else str(value)
+        return {"upper": str.upper, "lower": str.lower, "trim": str.strip, "length": len}[name](text)
+    if not isinstance(value, NUMBER) or isinstance(value, bool):
+        raise SqlError(f"{name.upper()} needs a number, got {value!r}")
+    if name == "abs":
+        return abs(value)
+    digits = args[1] if len(args) > 1 else 0
+    if not isinstance(digits, int) or isinstance(digits, bool):
+        raise SqlError("ROUND's second argument must be a whole number")
+    # Half away from zero, as SQL rounds (2.5 -> 3), not Python's half-to-even (2.5 -> 2)
+    exact = Decimal(str(value)).quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP)
+    return int(exact) if digits <= 0 else float(exact)
+
+
+def _columns_in(expr: Expr | None) -> list[Column]:
+    if expr is None:
+        return []
+    if isinstance(expr, Column):
+        return [expr]
+    return [c for child in _children(expr) for c in _columns_in(child)]
 
 
 def _sort_key(value: Any) -> tuple[int, Any]:
@@ -329,6 +376,15 @@ class Engine:
     # -- FROM and JOIN -----------------------------------------------------
 
     def _from(self, query: Select, scope: Scope) -> list[Row]:
+        if query.source is None:
+            # SELECT without FROM: one row with no columns. A column name here
+            # is almost always a forgotten FROM, so say that.
+            for item in query.items:
+                if item.is_star:
+                    raise SqlError("SELECT * needs a FROM clause")
+                for column in _columns_in(item.expr):
+                    raise SqlError(f"{column.name!r} is a column, but this query has no FROM — did you forget it?")
+            return [{}]
         base = self.db.get(query.source.name)
         label = query.source.label
         scope.add_table(label, base.columns)
@@ -377,7 +433,15 @@ class Engine:
                 continue
             name = item.alias or self._label(item.expr, index)
             columns.append((name, item.expr, item.alias))
-        return columns
+        # Rows are keyed by column name, so `SELECT id, id` used to collapse to
+        # one column. A repeated name gets a suffix instead: id, id_2.
+        seen: dict[str, int] = {}
+        unique = []
+        for name, expr, alias in columns:
+            key = name.lower()
+            seen[key] = seen.get(key, 0) + 1
+            unique.append((name if seen[key] == 1 else f"{name}_{seen[key]}", expr, alias))
+        return unique
 
     @staticmethod
     def _label(expr: Expr | None, index: int) -> str:
@@ -386,6 +450,8 @@ class Engine:
         if isinstance(expr, Aggregate):
             inner = "*" if expr.arg is None else Engine._label(expr.arg, index)
             return f"{expr.func}({inner})"
+        if isinstance(expr, Func) and all(isinstance(a, (Column, Aggregate)) for a in expr.args):
+            return f"{expr.name}({', '.join(Engine._label(a, index) for a in expr.args)})"
         return f"column{index}"
 
     def _plain(self, query: Select, rows: list[Row], scope: Scope) -> list[Projected]:
@@ -417,7 +483,7 @@ class Engine:
         for name, expr, _ in columns:
             if expr is None or collect_aggregates(expr, []):
                 continue
-            if self._group_key(expr) not in grouped_keys:
+            if not self._one_per_group(expr, grouped_keys):
                 raise SqlError(
                     f"{name!r} is not in GROUP BY and is not an aggregate — "
                     "add it to GROUP BY or wrap it in one"
@@ -430,7 +496,7 @@ class Engine:
                 continue
             if isinstance(expr, Column) and expr.name in output_names:
                 continue
-            if self._group_key(expr) not in grouped_keys:
+            if not self._one_per_group(expr, grouped_keys):
                 raise SqlError(
                     f"ORDER BY {self._label(expr, 0)!r} is not in GROUP BY and is not an aggregate"
                 )
@@ -459,6 +525,18 @@ class Engine:
     @staticmethod
     def _group_key(expr: Expr) -> str:
         return repr(expr).lower()
+
+    @classmethod
+    def _one_per_group(cls, expr: Expr, keys: set[str]) -> bool:
+        """Whether an expression has one value per group: a grouped expression,
+        a constant, or something built only from those (UPPER(status) when
+        grouping by status; a literal label next to the groups)."""
+        if cls._group_key(expr) in keys or isinstance(expr, (Literal, Aggregate)):
+            return True
+        if isinstance(expr, Column):
+            return False
+        children = _children(expr)
+        return bool(children) and all(cls._one_per_group(child, keys) for child in children)
 
     # -- DISTINCT, ORDER BY, LIMIT ----------------------------------------
 

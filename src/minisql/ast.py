@@ -54,6 +54,14 @@ class Aggregate(Expr):
 
 
 @dataclass(frozen=True)
+class Func(Expr):
+    """A scalar function call such as UPPER(name) or COALESCE(a, b)."""
+
+    name: str
+    args: tuple[Expr, ...] = ()
+
+
+@dataclass(frozen=True)
 class InList(Expr):
     value: Expr
     items: tuple[Expr, ...]
@@ -111,7 +119,7 @@ class OrderItem:
 @dataclass(frozen=True)
 class Select:
     items: tuple[SelectItem, ...]
-    source: TableRef
+    source: TableRef | None  # None for SELECT without FROM (one row, no columns)
     joins: tuple[Join, ...] = ()
     where: Expr | None = None
     group_by: tuple[Expr, ...] = ()

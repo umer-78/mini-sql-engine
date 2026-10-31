@@ -31,7 +31,7 @@ No SQLite, no pandas, no parser generator. The tokenizer, the recursive-descent
 parser, the expression evaluator and the execution model are all in
 [`src/minisql/`](src/minisql), in about 1,200 statements of Python.
 
-- **139 tests, 95% coverage**, Python 3.10–3.12
+- ** tests, 95% coverage**, Python 3.10–3.12
 - Three-valued NULL logic, the way SQL actually defines it
 - Errors point at the character that caused them
 
@@ -41,7 +41,7 @@ parser, the expression evaluator and the execution model are all in
 git clone https://github.com/umer-78/mini-sql-engine.git
 cd mini-sql-engine
 pip install -e ".[dev]"
-pytest                          # 139 tests
+pytest                          #  tests
 
 minisql data                    # interactive shell over the sample data
 minisql data -c "SELECT * FROM products LIMIT 3"
@@ -57,11 +57,12 @@ seed, so the numbers in this README are reproducible.
 
 ```sql
 SELECT [DISTINCT] col, expr AS alias, table.*, COUNT(*)
-FROM table [alias]
+[FROM table [alias]]                      -- optional: SELECT 1 + 1, UPPER('x')
 [INNER | LEFT] JOIN other ON other.id = table.id
 WHERE  cond AND cond OR NOT cond
        col = 1, <>, <, <=, >, >=
        col IS [NOT] NULL, col [NOT] IN (…), col [NOT] LIKE 'a%_'
+       col [NOT] BETWEEN low AND high   (inclusive)
        arithmetic: + - * / %
 GROUP BY col [HAVING aggregate-condition]
 ORDER BY col | alias | expr [ASC | DESC], …
@@ -76,7 +77,11 @@ DELETE FROM table [WHERE cond]
 ```
 
 Aggregates: `COUNT(*)`, `COUNT(col)`, `COUNT(DISTINCT col)`, `SUM`, `AVG`,
-`MIN`, `MAX`. The full grammar is in [docs/GRAMMAR.md](docs/GRAMMAR.md).
+`MIN`, `MAX`. Scalar functions: `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `ABS`,
+`ROUND(x [, digits])` (half away from zero, as SQL rounds: `ROUND(2.5)` is 3),
+`COALESCE(a, b, …)` and `NULLIF(a, b)`; NULL in gives NULL out, except for the
+last two. A column named twice (`SELECT id, id`) comes out as `id` and `id_2`.
+The full grammar is in [docs/GRAMMAR.md](docs/GRAMMAR.md).
 
 ### Changing data
 
@@ -267,7 +272,7 @@ src/minisql/cli.py        the `minisql` command and its shell
 data/                     sample database (4 CSVs)
 tools/make_data.py        regenerates data/ from a fixed seed
 docs/GRAMMAR.md           the grammar, as the parser reads it
-tests/                    139 tests
+tests/                     tests
 ```
 
 ## Not supported

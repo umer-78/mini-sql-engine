@@ -15,6 +15,7 @@ from .ast import (
     Column,
     Delete,
     Expr,
+    Func,
     InList,
     Insert,
     IsNull,
@@ -34,6 +35,13 @@ from .tokens import Kind, SqlError, Token, tokenize
 
 AGGREGATES = frozenset({"count", "sum", "avg", "min", "max"})
 COMPARISONS = frozenset({"=", "<>", "!=", "<", "<=", ">", ">="})
+
+
+# Scalar functions and how many arguments each takes (min, max).
+FUNCTIONS = {
+    "upper": (1, 1), "lower": (1, 1), "length": (1, 1), "trim": (1, 1),
+    "abs": (1, 1), "round": (1, 2), "coalesce": (1, 99), "nullif": (2, 2),
+}
 
 
 class Parser:
@@ -124,9 +132,9 @@ class Parser:
         distinct = self.accept("distinct") is not None
         items = self._select_items()
 
-        self.expect("from")
-        source = self._table_ref()
-        joins = self._joins()
+        # FROM is optional: `SELECT 1 + 1` evaluates once, over a single empty row
+        source = self._table_ref() if self.accept("from") else None
+        joins = self._joins() if source is not None else []
 
         where = self._expression() if self.accept("where") else None
 
@@ -319,7 +327,7 @@ class Parser:
             return IsNull(left, negated)
 
         negated = False
-        if self.at("not") and self.tokens[self.index + 1].value.lower() in {"in", "like"}:
+        if self.at("not") and self.tokens[self.index + 1].value.lower() in {"in", "like", "between"}:
             self.advance()
             negated = True
 
@@ -332,8 +340,17 @@ class Parser:
         if self.accept("like"):
             return Like(left, self._sum(), negated)
 
+        if self.accept("between"):
+            # x BETWEEN a AND b is x >= a AND x <= b, inclusive at both ends,
+            # with the same three-valued logic when anything is NULL
+            low = self._sum()
+            self.expect("and")
+            high = self._sum()
+            inside = Binary("and", Binary(">=", left, low), Binary("<=", left, high))
+            return Unary("not", inside) if negated else inside
+
         if negated:  # pragma: no cover - unreachable, the lookahead above guards it
-            raise SqlError("NOT must be followed by IN or LIKE here", self.current.position, self.sql)
+            raise SqlError("NOT must be followed by IN, LIKE or BETWEEN here", self.current.position, self.sql)
 
         if self.current.kind is Kind.OPERATOR and self.current.text in COMPARISONS:
             op = self.advance().text
@@ -386,6 +403,8 @@ class Parser:
 
         if token.kind is Kind.IDENT:
             self.advance()
+            if self.at("("):
+                return self._function(token)
             return Column(token.text)
 
         if self.accept("("):
@@ -408,6 +427,21 @@ class Parser:
         default = self._expression() if self.accept("else") else None
         self.expect("end")
         return Case(operand, tuple(whens), default)
+
+    def _function(self, name: Token) -> Expr:
+        func = name.text.lower()
+        if func not in FUNCTIONS:
+            known = ", ".join(sorted(f.upper() for f in FUNCTIONS))
+            raise SqlError(f"unknown function {name.text!r} (known: {known})", name.position, self.sql)
+        self.expect("(")
+        args: list[Expr] = [] if self.at(")") else self._expression_list()
+        self.expect(")")
+        low, high = FUNCTIONS[func]
+        if not low <= len(args) <= high:
+            want = f"{low}" if low == high else f"{low} to {high}" if high < 99 else f"at least {low}"
+            raise SqlError(f"{func.upper()} takes {want} argument{'s' if high != 1 else ''}, got {len(args)}",
+                           name.position, self.sql)
+        return Func(func, tuple(args))
 
     def _aggregate(self) -> Expr:
         func = self.advance().value.lower()

@@ -99,9 +99,11 @@ def test_having_without_group_by_is_refused():
 
 
 def test_a_missing_from_is_reported_with_the_position():
+    # FROM is optional now (SELECT 1 + 1), so a forgotten FROM parses; a
+    # misplaced keyword is still pointed at
     with pytest.raises(SqlError) as error:
-        parse("SELECT a, b customers")
-    assert "expected 'from'" in str(error.value)
+        parse("SELECT a, b WHERE a = 1 FROM customers")
+    assert "after the end of the query" in str(error.value)
     assert "^" in str(error.value)
 
 

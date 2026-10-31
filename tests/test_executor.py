@@ -254,3 +254,59 @@ def test_an_unknown_column_lists_the_ones_that_exist(run):
 def test_an_unknown_qualified_column_is_reported(run):
     with pytest.raises(SqlError, match="no column"):
         run("SELECT people.nickname FROM people")
+
+
+# -- NULL in IN lists, BETWEEN, functions, FROM-less SELECT -------------------
+
+def test_not_in_with_a_null_is_never_true(run):
+    # the classic trap: x NOT IN (1, NULL) is unknown for every x but 1
+    assert run("SELECT name FROM people WHERE id NOT IN (1, NULL)").rows == []
+    assert len(run("SELECT name FROM people WHERE id IN (1, NULL)").rows) == 1
+
+
+def test_between_is_inclusive_and_negatable(run):
+    inside = run("SELECT COUNT(*) FROM people WHERE id BETWEEN 1 AND 2")
+    outside = run("SELECT COUNT(*) FROM people WHERE id NOT BETWEEN 1 AND 2")
+    total = run("SELECT COUNT(*) FROM people")
+    assert one(inside) == 2
+    assert one(inside) + one(outside) == one(total)
+
+
+def test_repeated_columns_are_both_kept(run):
+    result = run("SELECT id, id FROM people LIMIT 1")
+    assert result.columns == ["id", "id_2"]
+
+
+@pytest.mark.parametrize("sql,expected", [
+    ("SELECT UPPER('ab')", "AB"),
+    ("SELECT LOWER('AB')", "ab"),
+    ("SELECT LENGTH('abc')", 3),
+    ("SELECT TRIM('  x ')", "x"),
+    ("SELECT ABS(-4)", 4),
+    ("SELECT ROUND(2.5)", 3),
+    ("SELECT ROUND(-2.5)", -3),
+    ("SELECT ROUND(1.005, 2)", 1.01),
+    ("SELECT COALESCE(NULL, NULL, 7)", 7),
+    ("SELECT NULLIF(3, 3)", None),
+    ("SELECT UPPER(NULL)", None),
+    ("SELECT 1 + 2 * 3", 7),
+])
+def test_scalar_functions_and_from_less_select(run, sql, expected):
+    assert one(run(sql)) == expected
+
+
+def test_functions_of_grouped_columns_and_constants_are_allowed(run):
+    result = run("SELECT UPPER(city), 'x', COUNT(*) FROM people GROUP BY city")
+    assert result.rows and all(row[1] == "x" for row in result.rows)
+
+
+@pytest.mark.parametrize("sql,message", [
+    ("SELECT FOO(1)", "unknown function"),
+    ("SELECT ROUND(1, 2, 3)", "takes 1 to 2 arguments"),
+    ("SELECT ABS('x')", "needs a number"),
+    ("SELECT name", "no FROM"),
+    ("SELECT *", "needs a FROM"),
+])
+def test_function_and_from_errors_are_clear(run, sql, message):
+    with pytest.raises(SqlError, match=message):
+        run(sql)

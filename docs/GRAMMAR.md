@@ -9,7 +9,7 @@ statement  := query | insert | update | delete
 query      := select { UNION [ALL] select }
               [ ORDER BY order { ',' order } ]
               [ LIMIT integer ] [ OFFSET integer ]
-select     := SELECT [DISTINCT] items FROM table { join }
+select     := SELECT [DISTINCT] items [ FROM table { join } ]
               [ WHERE expr ]
               [ GROUP BY expr { ',' expr } [ HAVING expr ] ]
 
@@ -33,12 +33,17 @@ not        := NOT not | comparison
 comparison := sum [ ( '=' | '<>' | '!=' | '<' | '<=' | '>' | '>=' ) sum
                   | IS [NOT] NULL
                   | [NOT] IN '(' expr { ',' expr } ')'
-                  | [NOT] LIKE sum ]
+                  | [NOT] LIKE sum
+                  | [NOT] BETWEEN sum AND sum ]
 sum        := product { ( '+' | '-' ) product }
 product    := unary { ( '*' | '/' | '%' ) unary }
 unary      := '-' unary | primary
 primary    := number | string | NULL | TRUE | FALSE
-            | aggregate | case | column | '(' expr ')'
+            | aggregate | function | case | column | '(' expr ')'
+function   := ( UPPER | LOWER | LENGTH | TRIM | ABS ) '(' expr ')'
+            | ROUND '(' expr [ ',' expr ] ')'
+            | COALESCE '(' expr { ',' expr } ')'
+            | NULLIF '(' expr ',' expr ')'
 case       := CASE [ expr ] WHEN expr THEN expr { WHEN expr THEN expr }
               [ ELSE expr ] END
 
@@ -59,6 +64,13 @@ column     := name [ '.' name ]
 - **`HAVING` requires `GROUP BY`.** Without one there is no group to filter.
 - **ORDER BY after a UNION** names an output column of the first `SELECT`, or its
   position (`ORDER BY 2`), and sorts the combined result.
+- **`x NOT IN (1, NULL)`** is never true: `x = NULL` is unknown, so x might
+  be in the list. `IN` is true on a match, unknown if any item is NULL, false
+  otherwise.
+- **Without `FROM`** a query evaluates once over a single empty row
+  (`SELECT 1 + 1`); naming a column there is reported as a forgotten `FROM`.
+- **`GROUP BY`** accepts, next to aggregates, any expression built only from
+  grouped expressions and constants (`UPPER(city)` grouped by `city`, a literal label).
 - **`CASE x WHEN NULL`** never matches: it compares with `=`, and `NULL = NULL`
   is unknown. Use `CASE WHEN x IS NULL THEN …` instead.
 - **Writes change memory, not files.** `.save` in the shell or `--save` on the
